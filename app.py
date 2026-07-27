@@ -31,6 +31,13 @@ SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 st.markdown(
     """
     <style>
+      /* Ocultar barra superior de Streamlit (Fork, menu, deploy) y footer */
+      header[data-testid="stHeader"] { display: none !important; }
+      #MainMenu { visibility: hidden; }
+      footer { visibility: hidden; }
+      div[data-testid="stToolbar"] { display: none !important; }
+      div[data-testid="stDecoration"] { display: none !important; }
+      .stAppDeployButton { display: none !important; }
       .block-container { padding-top: 1.2rem; padding-bottom: 1rem; max-width: 720px; }
       h1 { font-size: 1.5rem !important; margin-bottom: 0.2rem !important; }
       div[data-testid="stVerticalBlock"] { gap: 0.55rem; }

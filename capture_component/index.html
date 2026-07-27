@@ -136,7 +136,8 @@ window.addEventListener("paste", function (e) {
 window.addEventListener("message", function (event) {
   const data = event.data;
   if (!data || data.type !== "streamlit:render") return;
-  const args = (data.args && data.args.args) || {};
+  // Streamlit puede entregar los argumentos en data.args o en data.args.args
+  const args = (data.args && data.args.args) ? data.args.args : (data.args || {});
   if (args.label) LABEL = args.label;
   if (args.value && args.value.length > 0) {
     currentData = args.value; renderFilled(currentData);
