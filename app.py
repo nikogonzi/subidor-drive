@@ -144,7 +144,7 @@ with c2:
         horizontal=True,
     )
 
-st.caption("Captura con ⌃⇧⌘4, selecciona el área, haz clic en la casilla del nivel y pega con ⌘V. No es obligatorio llenar los 4 niveles.")
+st.caption("Captura con ⌃⇧⌘4 (CONTROL + SHIFT + COMMAND + 4), selecciona el área, haz clic en la casilla del nivel y pega con ⌘V. No es obligatorio llenar los 4 niveles.")
 
 # Casillas 2x2
 imagenes = {}
