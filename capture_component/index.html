@@ -4,23 +4,23 @@
 <meta charset="utf-8" />
 <style>
   * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
   body {
-    margin: 0;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   }
   .slot {
-    border: 3px dashed #b8c2cc;
-    border-radius: 14px;
+    border: 2px dashed #b8c2cc;
+    border-radius: 10px;
     background: #f7f9fb;
-    height: 150px;
+    height: 92px;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: all 0.12s ease;
     text-align: center;
-    padding: 10px;
+    padding: 6px;
     user-select: none;
     outline: none;
   }
@@ -29,92 +29,68 @@
     border-color: #667eea;
     border-style: solid;
     background: #eef2ff;
-    box-shadow: 0 0 0 4px rgba(102,126,234,0.25);
+    box-shadow: 0 0 0 3px rgba(102,126,234,0.25);
   }
   .slot.filled {
     border-style: solid;
     border-color: #2e7d32;
     background: #ffffff;
-    padding: 6px;
-    height: auto;
+    padding: 4px;
+    height: 92px;
+    position: relative;
   }
   .slot.filled img {
     max-width: 100%;
-    max-height: 260px;
-    border-radius: 8px;
+    max-height: 72px;
+    border-radius: 6px;
     display: block;
   }
-  .title {
-    font-weight: 700;
-    font-size: 17px;
-    color: #2d3748;
-    margin-bottom: 8px;
-  }
-  .hint {
-    font-size: 13px;
-    color: #718096;
-    line-height: 1.4;
-  }
+  .title { font-weight: 700; font-size: 14px; color: #2d3748; margin-bottom: 4px; }
+  .hint  { font-size: 11px; color: #718096; line-height: 1.3; }
   .active .hint { color: #667eea; font-weight: 600; }
-  .badge {
-    font-size: 12px;
-    color: #2e7d32;
-    font-weight: 700;
-    margin-top: 6px;
+  .filled .title-mini {
+    position: absolute; top: 3px; left: 6px;
+    font-size: 10px; font-weight: 700; color: #2e7d32;
+    background: rgba(255,255,255,0.85); padding: 0 4px; border-radius: 4px;
   }
   .clear-btn {
-    margin-top: 6px;
-    font-size: 12px;
-    color: #c53030;
-    background: none;
-    border: none;
-    cursor: pointer;
-    text-decoration: underline;
+    position: absolute; top: 3px; right: 5px;
+    font-size: 12px; line-height: 1; color: #fff; background: #c53030;
+    border: none; cursor: pointer; border-radius: 50%;
+    width: 18px; height: 18px; padding: 0;
   }
 </style>
 </head>
 <body>
-  <div id="slot" class="slot" tabindex="0">
-    <div class="title" id="title">Captura Nivel X</div>
-    <div class="hint" id="hint">Haz clic aquí y luego pega con ⌘V</div>
-  </div>
+  <div id="slot" class="slot" tabindex="0"></div>
 
 <script>
-// ---- Comunicación con Streamlit (protocolo de componentes) ----
 function sendValue(value) {
   window.parent.postMessage(
-    { isStreamlitMessage: true, type: "streamlit:setComponentValue", value: value },
-    "*"
-  );
+    { isStreamlitMessage: true, type: "streamlit:setComponentValue", value: value }, "*");
 }
 function setFrameHeight(h) {
   window.parent.postMessage(
-    { isStreamlitMessage: true, type: "streamlit:setFrameHeight", height: h },
-    "*"
-  );
+    { isStreamlitMessage: true, type: "streamlit:setFrameHeight", height: h }, "*");
 }
 function ready() {
-  window.parent.postMessage({ isStreamlitMessage: true, type: "streamlit:componentReady", apiVersion: 1 }, "*");
+  window.parent.postMessage(
+    { isStreamlitMessage: true, type: "streamlit:componentReady", apiVersion: 1 }, "*");
 }
 
-const slot  = document.getElementById("slot");
-const title = document.getElementById("title");
-const hint  = document.getElementById("hint");
-
-let LEVEL_LABEL = "Captura Nivel X";
-let currentData = null;   // dataURL de la imagen pegada
+const slot = document.getElementById("slot");
+let LABEL = "Nivel";
+let currentData = null;
 let isActive = false;
 
-function reportHeight() {
-  setFrameHeight(document.body.scrollHeight + 4);
-}
+function reportHeight() { setFrameHeight(100); }
 
 function renderEmpty() {
   slot.className = "slot" + (isActive ? " active" : "");
   slot.innerHTML =
-    '<div class="title">' + LEVEL_LABEL + '</div>' +
+    '<div class="title">' + LABEL + '</div>' +
     '<div class="hint">' +
-      (isActive ? "Esperando imagen — pega con ⌘V" : "Haz clic aquí y luego pega con ⌘V") +
+      (isActive ? "Esperando imagen &mdash; &#8984;V" : "Clic y pega con &#8984;V") +
     '</div>';
   reportHeight();
 }
@@ -122,38 +98,31 @@ function renderEmpty() {
 function renderFilled(dataUrl) {
   slot.className = "slot filled";
   slot.innerHTML =
-    '<div class="title">' + LEVEL_LABEL + '</div>' +
-    '<img src="' + dataUrl + '" />' +
-    '<div class="badge">✓ Imagen cargada</div>' +
-    '<button class="clear-btn" id="clearBtn">Quitar imagen</button>';
+    '<div class="title-mini">' + LABEL + '</div>' +
+    '<button class="clear-btn" id="clearBtn" title="Quitar">&times;</button>' +
+    '<img src="' + dataUrl + '" />';
   document.getElementById("clearBtn").addEventListener("click", function (e) {
     e.stopPropagation();
-    currentData = null;
-    isActive = true;
-    sendValue("");           // avisa a Streamlit que se vació
-    renderEmpty();
-    slot.focus();
+    currentData = null; isActive = true;
+    sendValue(""); renderEmpty(); slot.focus();
   });
   reportHeight();
 }
 
-// Activar la casilla al hacer clic
 slot.addEventListener("click", function () {
-  isActive = true;
-  slot.focus();
+  isActive = true; slot.focus();
   if (!currentData) renderEmpty();
 });
 
-// Escuchar el pegado
 window.addEventListener("paste", function (e) {
-  if (!isActive) return;               // solo la casilla activa recibe el pegado
+  if (!isActive) return;
   const items = (e.clipboardData || window.clipboardData).items;
   for (let i = 0; i < items.length; i++) {
     if (items[i].type.indexOf("image") !== -1) {
       const blob = items[i].getAsFile();
       const reader = new FileReader();
       reader.onload = function (ev) {
-        currentData = ev.target.result;   // dataURL (image/png)
+        currentData = ev.target.result;
         sendValue(currentData);
         renderFilled(currentData);
       };
@@ -164,22 +133,17 @@ window.addEventListener("paste", function (e) {
   }
 });
 
-// Recibir datos desde Streamlit (etiqueta del nivel + valor previo tras rerun)
 window.addEventListener("message", function (event) {
   const data = event.data;
-  if (!data) return;
-  if (data.type === "streamlit:render") {
-    const args = (data.args && data.args.args) || {};
-    if (args.label) { LEVEL_LABEL = args.label; }
-    // Restaurar imagen previa si Streamlit la reenvía (mantiene preview tras rerun)
-    if (args.value && args.value.length > 0) {
-      currentData = args.value;
-      renderFilled(currentData);
-    } else if (!currentData) {
-      renderEmpty();
-    } else {
-      renderFilled(currentData);
-    }
+  if (!data || data.type !== "streamlit:render") return;
+  const args = (data.args && data.args.args) || {};
+  if (args.label) LABEL = args.label;
+  if (args.value && args.value.length > 0) {
+    currentData = args.value; renderFilled(currentData);
+  } else if (!currentData) {
+    renderEmpty();
+  } else {
+    renderFilled(currentData);
   }
 });
 
