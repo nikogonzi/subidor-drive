@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .slot {
+    border: 3px dashed #b8c2cc;
+    border-radius: 14px;
+    background: #f7f9fb;
+    height: 150px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    text-align: center;
+    padding: 10px;
+    user-select: none;
+    outline: none;
+  }
+  .slot:hover { border-color: #667eea; background: #eef2ff; }
+  .slot.active {
+    border-color: #667eea;
+    border-style: solid;
+    background: #eef2ff;
+    box-shadow: 0 0 0 4px rgba(102,126,234,0.25);
+  }
+  .slot.filled {
+    border-style: solid;
+    border-color: #2e7d32;
+    background: #ffffff;
+    padding: 6px;
+    height: auto;
+  }
+  .slot.filled img {
+    max-width: 100%;
+    max-height: 260px;
+    border-radius: 8px;
+    display: block;
+  }
+  .title {
+    font-weight: 700;
+    font-size: 17px;
+    color: #2d3748;
+    margin-bottom: 8px;
+  }
+  .hint {
+    font-size: 13px;
+    color: #718096;
+    line-height: 1.4;
+  }
+  .active .hint { color: #667eea; font-weight: 600; }
+  .badge {
+    font-size: 12px;
+    color: #2e7d32;
+    font-weight: 700;
+    margin-top: 6px;
+  }
+  .clear-btn {
+    margin-top: 6px;
+    font-size: 12px;
+    color: #c53030;
+    background: none;
+    border: none;
+    cursor: pointer;
+    text-decoration: underline;
+  }
+</style>
+</head>
+<body>
+  <div id="slot" class="slot" tabindex="0">
+    <div class="title" id="title">Captura Nivel X</div>
+    <div class="hint" id="hint">Haz clic aquí y luego pega con ⌘V</div>
+  </div>
+
+<script>
+// ---- Comunicación con Streamlit (protocolo de componentes) ----
+function sendValue(value) {
+  window.parent.postMessage(
+    { isStreamlitMessage: true, type: "streamlit:setComponentValue", value: value },
+    "*"
+  );
+}
+function setFrameHeight(h) {
+  window.parent.postMessage(
+    { isStreamlitMessage: true, type: "streamlit:setFrameHeight", height: h },
+    "*"
+  );
+}
+function ready() {
+  window.parent.postMessage({ isStreamlitMessage: true, type: "streamlit:componentReady", apiVersion: 1 }, "*");
+}
+
+const slot  = document.getElementById("slot");
+const title = document.getElementById("title");
+const hint  = document.getElementById("hint");
+
+let LEVEL_LABEL = "Captura Nivel X";
+let currentData = null;   // dataURL de la imagen pegada
+let isActive = false;
+
+function reportHeight() {
+  setFrameHeight(document.body.scrollHeight + 4);
+}
+
+function renderEmpty() {
+  slot.className = "slot" + (isActive ? " active" : "");
+  slot.innerHTML =
+    '<div class="title">' + LEVEL_LABEL + '</div>' +
+    '<div class="hint">' +
+      (isActive ? "Esperando imagen — pega con ⌘V" : "Haz clic aquí y luego pega con ⌘V") +
+    '</div>';
+  reportHeight();
+}
+
+function renderFilled(dataUrl) {
+  slot.className = "slot filled";
+  slot.innerHTML =
+    '<div class="title">' + LEVEL_LABEL + '</div>' +
+    '<img src="' + dataUrl + '" />' +
+    '<div class="badge">✓ Imagen cargada</div>' +
+    '<button class="clear-btn" id="clearBtn">Quitar imagen</button>';
+  document.getElementById("clearBtn").addEventListener("click", function (e) {
+    e.stopPropagation();
+    currentData = null;
+    isActive = true;
+    sendValue("");           // avisa a Streamlit que se vació
+    renderEmpty();
+    slot.focus();
+  });
+  reportHeight();
+}
+
+// Activar la casilla al hacer clic
+slot.addEventListener("click", function () {
+  isActive = true;
+  slot.focus();
+  if (!currentData) renderEmpty();
+});
+
+// Escuchar el pegado
+window.addEventListener("paste", function (e) {
+  if (!isActive) return;               // solo la casilla activa recibe el pegado
+  const items = (e.clipboardData || window.clipboardData).items;
+  for (let i = 0; i < items.length; i++) {
+    if (items[i].type.indexOf("image") !== -1) {
+      const blob = items[i].getAsFile();
+      const reader = new FileReader();
+      reader.onload = function (ev) {
+        currentData = ev.target.result;   // dataURL (image/png)
+        sendValue(currentData);
+        renderFilled(currentData);
+      };
+      reader.readAsDataURL(blob);
+      e.preventDefault();
+      break;
+    }
+  }
+});
+
+// Recibir datos desde Streamlit (etiqueta del nivel + valor previo tras rerun)
+window.addEventListener("message", function (event) {
+  const data = event.data;
+  if (!data) return;
+  if (data.type === "streamlit:render") {
+    const args = (data.args && data.args.args) || {};
+    if (args.label) { LEVEL_LABEL = args.label; }
+    // Restaurar imagen previa si Streamlit la reenvía (mantiene preview tras rerun)
+    if (args.value && args.value.length > 0) {
+      currentData = args.value;
+      renderFilled(currentData);
+    } else if (!currentData) {
+      renderEmpty();
+    } else {
+      renderFilled(currentData);
+    }
+  }
+});
+
+ready();
+renderEmpty();
+</script>
+</body>
+</html>
