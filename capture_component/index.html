@@ -14,6 +14,13 @@
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: transparent; color: var(--fg); font-family: var(--font); font-size: 14px; }
   .wrap { display: flex; flex-direction: column; gap: 8px; outline: none; }
+  .pt { display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--tile); }
+  .pt .code { font-size: 26px; font-weight: 700; line-height: 1; letter-spacing: .01em; }
+  .pt .grp { font-size: 13px; font-weight: 600; padding: 3px 10px; border-radius: 999px; color: #fff; }
+  .pt .grp.EPL { background: #e8590c; } .pt .grp.Sana { background: #1c7ed6; }
+  .pt .meta { font-size: 15px; color: var(--muted); } .pt .meta b { color: var(--fg); }
+  .pt .cnt { margin-left: auto; font-size: 15px; } .pt .cnt b { font-size: 17px; }
+  .pt .miss { flex-basis: 100%; font-size: 13px; color: var(--warn); }
   .status { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--tile); }
   .status .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
   .status.ready .dot { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent); }
@@ -51,7 +58,7 @@
   .nmform input { font: inherit; font-size: 12px; padding: 3px 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--fg); width: 100%; }
   .nmform div { display: flex; gap: 6px; justify-content: center; }
   .nmform button { font: inherit; font-size: 12px; padding: 2px 8px; border-radius: 4px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); cursor: pointer; }
-  .bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding-right: 52px; }
   .bar .sum { flex: 1 1 260px; font-size: 13px; color: var(--muted); min-width: 0; }
   .bar .sum b { color: var(--fg); }
   .bar .warns { color: var(--warn); }
@@ -64,6 +71,7 @@
 </head>
 <body>
 <div class="wrap" id="wrap" tabindex="0">
+  <div class="pt" id="pt"></div>
   <div class="status idle" id="status"><span class="dot"></span><span id="statusTxt"></span><span class="restored" id="restored"></span></div>
   <div class="grid" id="grid"></div>
   <div class="bar"><div class="sum" id="sum"></div><button class="up" id="up" disabled>Subir</button></div>
@@ -213,8 +221,16 @@ function renderStatus() {
   if (focused) { st.className = "status ready"; tx.innerHTML = `Listo: el próximo <b>⌘V</b> va a <b>${slotLabel(active)}</b> (${SLOTS[active].obsName} · nivel ${SLOTS[active].level}).`; }
   else { st.className = "status idle"; tx.innerHTML = `Haz <b>clic en la grilla</b> para activar el pegado. Siguiente: <b>${slotLabel(active)}</b>.`; }
 }
+function renderPatient() {
+  const p = ARGS.patient;
+  document.getElementById("pt").innerHTML = `<span class="code">${esc(p.codigo)}</span><span class="grp ${esc(p.grupo)}">${esc(p.grupoTxt || p.grupo)}</span>`
+    + `<span class="meta">par <b>${esc(p.pareja || "—")}</b></span>`
+    + `<span class="cnt"><b>${p.done}</b> de ${p.total} capturas en Drive</span>`
+    + (p.missing ? `<span class="miss">⚠ ${esc(p.missing)}</span>` : "");
+}
 function render() {
   if (!ARGS) return;
+  renderPatient();
   const g = document.getElementById("grid"); g.textContent = "";
   g.appendChild(document.createElement("div"));
   for (const L of ["A", "B", "C", "D"]) { const h = document.createElement("div"); h.className = "colh"; h.innerHTML = `<b>Nivel ${L}</b> · ${ARGS.levelNames[L]}`; g.appendChild(h); }
@@ -226,12 +242,15 @@ function render() {
   const nNew = Object.keys(NEW).length, nNom = Object.keys(NOMED).length, nUn = UNMARK.size;
   const repl = Object.keys(NEW).filter((k) => SLOTS[k].existing).length;
   const pend = ORDER.filter((k) => needsImage(k)).length;
-  const nW = Object.keys(NEW).reduce((a, k) => a + warnings(k).length + (NEW[k].contour ? 0 : 1) + (NEW[k].axes ? 0 : 1), 0);
+  const nW = Object.keys(NEW).reduce((a, k) => a + warnings(k).length + (NEW[k].contour ? 0 : 1), 0);
+  const anyAxes = ORDER.some((k) => (NEW[k] && NEW[k].axes) || (!NEW[k] && SLOTS[k] && SLOTS[k].existing && SLOTS[k].existing.axes));
+  const anyImg = ORDER.some((k) => NEW[k] || (SLOTS[k] && SLOTS[k].existing));
   const parts = [];
   if (nNew) parts.push(`<b>${nNew}</b> nueva${nNew > 1 ? "s" : ""}${repl ? ` (${repl} reemplaza${repl > 1 ? "n" : ""} lo que hay en Drive)` : ""}`);
   if (nNom) parts.push(`<b>${nNom}</b> no medible${nNom > 1 ? "s" : ""}`);
   if (nUn) parts.push(`${nUn} marca${nUn > 1 ? "s" : ""} quitada${nUn > 1 ? "s" : ""}`);
   parts.push(pend ? `${pend} pendiente${pend > 1 ? "s" : ""}` : "sin pendientes");
+  if (anyImg) parts.push(anyAxes ? "ejes ✓" : `<span class="warns">ninguna captura tiene los ejes (basta con una)</span>`);
   document.getElementById("sum").innerHTML = parts.join(" · ") + (nW ? ` · <span class="warns">${nW} aviso${nW > 1 ? "s" : ""} por revisar</span>` : "");
   const up = document.getElementById("up"); const n = nNew + nNom + nUn;
   up.disabled = busy || n === 0;
@@ -268,11 +287,11 @@ function tile(k) {
     el.innerHTML = `<img alt="" src="${n.url}"><span class="badge ${ex ? "repl" : "new"}">${ex ? "reemplaza" : "nueva"}</span>`;
     const x = document.createElement("button"); x.className = "x"; x.title = "Quitar"; x.textContent = "×"; x.onclick = (e) => { e.stopPropagation(); removeNew(k); }; el.appendChild(x);
     const ch = document.createElement("div"); ch.className = "checks";
-    ch.innerHTML = `<span class="chk ${n.contour ? "okc" : "b"}">${n.contour ? "contorno ✓" : "sin contorno"}</span><span class="chk ${n.axes ? "okc" : "w"}">${n.axes ? "ejes ✓" : "sin ejes"}</span>` + warnings(k).map(([c, t]) => `<span class="chk ${c}">${t}</span>`).join("");
+    ch.innerHTML = `<span class="chk ${n.contour ? "okc" : "b"}">${n.contour ? "contorno ✓" : "sin contorno"}</span>` + (n.axes ? `<span class="chk okc">ejes ✓</span>` : "") + warnings(k).map(([c, t]) => `<span class="chk ${c}">${t}</span>`).join("");
     el.appendChild(ch);
   } else if (ex) {
     el.classList.add("existing");
-    el.innerHTML = (ex.thumb ? `<img alt="" src="${ex.thumb}">` : `<div class="hint">En Drive</div>`) + `<span class="badge">en Drive</span>` + (active === k ? `<div class="checks"><span class="chk w">pega para reemplazar</span></div>` : "");
+    el.innerHTML = (ex.thumb ? `<img alt="" src="${ex.thumb}">` : `<div class="hint">En Drive</div>`) + `<span class="badge">en Drive</span>` + `<div class="checks">${ex.axes ? `<span class="chk okc">ejes ✓</span>` : ""}${active === k ? `<span class="chk w">pega para reemplazar</span>` : ""}</div>`;
   } else {
     el.innerHTML = `<div class="hint">${active === k ? "Esperando imagen<br>⌘V" : "Vacía"}</div>`;
     const b = document.createElement("button"); b.className = "link"; b.textContent = "No medible";

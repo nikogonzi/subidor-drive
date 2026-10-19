@@ -41,9 +41,6 @@ st.markdown(
       .hdr .prog { font-size: 0.92rem; opacity: 0.8; }
       .hdr .prog b { opacity: 1; }
       .last { font-size: 0.92rem; padding: 4px 10px; border-radius: 6px; background: rgba(33, 195, 84, 0.14); display: inline-block; }
-      .pinfo { font-size: 0.95rem; line-height: 1.35; padding-top: 0.15rem; }
-      .pinfo .code { font-size: 1.25rem; font-weight: 700; }
-      .pinfo .warn { color: #d97706; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -285,9 +282,10 @@ def fmt(code):
     return f"{mark}  {code} · {p['grupo']}{extra}"
 
 
-c1, c2, c3 = st.columns([2.2, 1.0, 4.2], vertical_alignment="bottom")
+c1, c2, _ = st.columns([2.0, 1.5, 4.5], vertical_alignment="center")
 with c1:
-    st.selectbox("Paciente (escribe para buscar)", [p["codigo"] for p in patients], key="sel", format_func=fmt)
+    st.selectbox("Paciente", [p["codigo"] for p in patients], key="sel", format_func=fmt,
+                 label_visibility="collapsed", help="Escribe para buscar un paciente")
 with c2:
     if st.button("Siguiente pendiente →", use_container_width=True):
         nxt = next_pending(ss.sel)
@@ -298,32 +296,28 @@ with c2:
             st.toast("No quedan pacientes pendientes 🎉")
 
 p = by_code[ss.sel]
-with c3:
-    missing = []
-    for o in "NR":
-        falt = [l for l in "ABCD" if l not in p[f"niveles_{o}"]]
-        if falt:
-            missing.append((o, falt))
-    miss_txt = ""
-    if missing:
-        if len(missing) == 2 and missing[0][1] == missing[1][1]:
-            miss_txt = f"Sin nivel {', '.join(missing[0][1])} en ambos observadores"
-        else:
-            miss_txt = "; ".join(f"sin nivel {', '.join(f)} en {o}" for o, f in missing).capitalize()
-        if p["comentario"]:
-            miss_txt += f" · <i>{p['comentario']}</i>"
-    d, t = stat[p["codigo"]]
-    st.markdown(
-        f'<div class="pinfo"><span class="code">{p["codigo"]}</span> · {GRUPO_TXT[p["grupo"]]} · par {p["pareja"] or "—"} · '
-        f'{d} de {t} capturas listas'
-        + (f'<br><span class="warn">⚠ {miss_txt}</span>' if miss_txt else "")
-        + "</div>",
-        unsafe_allow_html=True,
-    )
+missing = []
+for o in "NR":
+    falt = [l for l in "ABCD" if l not in p[f"niveles_{o}"]]
+    if falt:
+        missing.append((o, falt))
+miss_txt = ""
+if missing:
+    if len(missing) == 2 and missing[0][1] == missing[1][1]:
+        miss_txt = f"Sin nivel {', '.join(missing[0][1])} en ambos observadores"
+    else:
+        miss_txt = "; ".join(f"sin nivel {', '.join(f)} en {OBS[o]}" for o, f in missing).capitalize()
+    if p["comentario"]:
+        miss_txt += f" · {p['comentario']}"
+d, t = stat[p["codigo"]]
 
 # --------------------------------------------------------------------------
 # Grilla de captura
 # --------------------------------------------------------------------------
+axes_reg = {}
+for r in ss.registry:
+    if r.get("archivo") and r.get("estado") in ("subida", "reemplazada"):
+        axes_reg[r["archivo"]] = r.get("ejes") == "1"
 slots = []
 for key in ORDER:
     o, l = key.split("_")
@@ -335,7 +329,7 @@ for key in ORDER:
             th, w, h = thumb_of(files[name]["id"], files[name]["mtime"])
         except Exception:  # noqa: BLE001
             th, w, h = None, None, None
-        existing = {"thumb": th, "w": w, "h": h}
+        existing = {"thumb": th, "w": w, "h": h, "axes": axes_reg.get(name)}
     slots.append({
         "key": key, "obs": o, "obsName": OBS[o], "level": l, "available": available,
         "reason": (p["comentario"] if not available else ""), "existing": existing,
@@ -343,7 +337,8 @@ for key in ORDER:
     })
 
 val = _grid(
-    patient={"codigo": p["codigo"], "grupo": p["grupo"], "pareja": p["pareja"]},
+    patient={"codigo": p["codigo"], "grupo": p["grupo"], "grupoTxt": GRUPO_TXT[p["grupo"]], "pareja": p["pareja"],
+             "done": d, "total": t, "missing": miss_txt},
     slots=slots, obsNames=OBS, levelNames=NIVELES,
     status=ss.status_msg if ss.status_msg and ss.status_msg.get("codigo") == p["codigo"] else None, cleared=ss.cleared,
     key=f"grid_{p['codigo']}_{ss.nonce}", default=None,
