@@ -224,9 +224,10 @@ ss = st.session_state
 ss.setdefault("done_ids", set())
 ss.setdefault("nonce", 0)
 ss.setdefault("last", None)
-ss.setdefault("status_msg", None)
 ss.setdefault("cleared", {})
 ss.setdefault("toast", None)
+ss.setdefault("ack", None)
+ss.setdefault("uploads", {})
 
 try:
     store = get_store()
@@ -252,6 +253,87 @@ def next_pending(after=None):
             return c
     return None
 
+
+# --------------------------------------------------------------------------
+# Subida por trozos: la grilla envía cada imagen en trozos de ~2 MB y espera
+# confirmación (ack) antes del siguiente; al final envía "commit".
+# --------------------------------------------------------------------------
+def handle_msg(val):
+    """Procesa un mensaje de la grilla. Devuelve "commit", "ack" o None (nada nuevo)."""
+    if not (isinstance(val, dict) and val.get("id")) or val["id"] in ss.done_ids:
+        return None
+    ss.done_ids.add(val["id"])
+    act, up, seq, code = val.get("action"), val.get("upload_id"), val.get("seq"), val.get("codigo")
+    pp = by_code.get(code)
+    U = ss.uploads.setdefault(up, {"files": {}, "rows": [], "seqs": set()})
+    if seq in U["seqs"]:  # reenvío de un trozo ya procesado: solo confirmar
+        ss.ack = {"upload_id": up, "seq": seq, "ok": True}
+        return "ack"
+    try:
+        if pp is None:
+            raise ValueError(f"Código desconocido: {code}")
+        now = datetime.now().isoformat(timespec="seconds")
+        if act == "chunk":
+            key = val["key"]
+            f = U["files"].setdefault(key, {"parts": {}, "n": int(val["n"]), "meta": val.get("meta") or {}})
+            f["parts"][int(val["i"])] = val["data"]
+            if len(f["parts"]) == f["n"]:
+                data = base64.b64decode("".join(f["parts"][j] for j in range(f["n"])))
+                f["parts"] = {}
+                o, l = key.split("_")
+                name = file_name(pp, o, l)
+                prev = ss.files.get(name)
+                ss.files[name] = store.put(name, data, "image/png", prev["id"] if prev else None)
+                m = f["meta"]
+                U["rows"].append([now, code, pp["grupo"], pp["pareja"], o, l, name, "reemplazada" if prev else "subida", "",
+                                  m.get("w", ""), m.get("h", ""), int(bool(m.get("contour"))), int(bool(m.get("axes")))])
+            U["seqs"].add(seq)
+            ss.ack = {"upload_id": up, "seq": seq, "ok": True}
+            return "ack"
+        if act == "commit":
+            rows = U["rows"]
+            for nm in val.get("nomed", []):
+                o, l = nm["key"].split("_")
+                rows.append([now, code, pp["grupo"], pp["pareja"], o, l, "", "no_medible", nm.get("reason", ""), "", "", "", ""])
+            for k in val.get("unmark", []):
+                o, l = k.split("_")
+                rows.append([now, code, pp["grupo"], pp["pareja"], o, l, "", "desmarcado", "", "", "", "", ""])
+            reg_meta = store.list_files().get(REGISTRO)  # se relee para no perder líneas
+            buf = io.StringIO()
+            if reg_meta:
+                buf.write(store.get(reg_meta["id"]).decode("utf-8"))
+            else:
+                csv.writer(buf, lineterminator="\n").writerow(REG_COLS)
+            csv.writer(buf, lineterminator="\n").writerows(rows)
+            store.put(REGISTRO, buf.getvalue().encode("utf-8"), "text/csv", reg_meta["id"] if reg_meta else None)
+            ss.uploads.pop(up, None)
+            refresh(store)
+            try:
+                ss.cleared[code] = int(str(up).split("-")[0])
+            except ValueError:
+                ss.cleared[code] = int(time.time() * 1000)
+            d2, t2 = patient_status(pp, ss.files, ss.nomed)
+            stat[code] = (d2, t2)
+            ss.last, ss.ack = code, None
+            ss.nonce += 1
+            if d2 >= t2:
+                nxt = next_pending(code)
+                if nxt:
+                    ss.goto = nxt
+            else:
+                ss.toast = f"{code}: guardado. Faltan {t2 - d2} casillas para completarlo."
+            return "commit"
+    except Exception as ex:  # noqa: BLE001
+        ss.uploads.pop(up, None)
+        ss.ack = {"upload_id": up, "seq": seq, "ok": False, "msg": drive_error_message(ex)}
+        return "ack"
+    return None
+
+
+if "sel" in ss and "goto" not in ss:
+    _pending = ss.get(f"grid_{ss.sel}_{ss.nonce}")
+    if handle_msg(_pending) == "commit":
+        st.rerun()
 
 if ss.toast:
     st.toast(ss.toast)
@@ -340,74 +422,11 @@ val = _grid(
     patient={"codigo": p["codigo"], "grupo": p["grupo"], "grupoTxt": GRUPO_TXT[p["grupo"]], "pareja": p["pareja"],
              "done": d, "total": t, "missing": miss_txt},
     slots=slots, obsNames=OBS, levelNames=NIVELES,
-    status=ss.status_msg if ss.status_msg and ss.status_msg.get("codigo") == p["codigo"] else None, cleared=ss.cleared,
+    ack=ss.ack, cleared=ss.cleared,
     key=f"grid_{p['codigo']}_{ss.nonce}", default=None,
 )
-prog_box = st.empty()
+if handle_msg(val):  # respaldo, por si el valor no estaba disponible antes de dibujar la grilla
+    st.rerun()
 
 st.caption("Captura con ⌃⇧⌘4 (o ⌘⇧5 + Enter si guardaste la selección) y pega con ⌘V: la imagen entra en la casilla marcada y se avanza sola. "
            "Para reemplazar una imagen, haz clic en su casilla y vuelve a pegar. Sube con ⌘↵.")
-
-# --------------------------------------------------------------------------
-# Subida
-# --------------------------------------------------------------------------
-if val and isinstance(val, dict) and val.get("action") == "upload" and val.get("id") not in ss.done_ids:
-    ss.done_ids.add(val["id"])
-    code = val.get("codigo")
-    pp = by_code.get(code)
-    try:
-        if pp is None:
-            raise ValueError(f"Código desconocido: {code}")
-        items = val.get("items", [])
-        steps = len(items) + 1
-        bar = prog_box.progress(0.0, text="Subiendo…")
-        now = datetime.now().isoformat(timespec="seconds")
-        new_rows = []
-        for i, it in enumerate(items, 1):
-            o, l = it["key"].split("_")
-            name = file_name(pp, o, l)
-            data = base64.b64decode(it["data"].split(",", 1)[1])
-            prev = files.get(name)
-            bar.progress((i - 1) / steps, text=f"Subiendo {o}·{l} ({i} de {len(items)})…")
-            meta = store.put(name, data, "image/png", prev["id"] if prev else None)
-            files[name] = meta
-            new_rows.append([now, code, pp["grupo"], pp["pareja"], o, l, name, "reemplazada" if prev else "subida", "",
-                             it.get("w", ""), it.get("h", ""), int(bool(it.get("contour"))), int(bool(it.get("axes")))])
-        for nm in val.get("nomed", []):
-            o, l = nm["key"].split("_")
-            new_rows.append([now, code, pp["grupo"], pp["pareja"], o, l, "", "no_medible", nm.get("reason", ""), "", "", "", ""])
-        for k in val.get("unmark", []):
-            o, l = k.split("_")
-            new_rows.append([now, code, pp["grupo"], pp["pareja"], o, l, "", "desmarcado", "", "", "", "", ""])
-        bar.progress(len(items) / steps, text="Actualizando el registro…")
-        # registro: se relee desde Drive para no perder líneas
-        reg_meta = store.list_files().get(REGISTRO)
-        buf = io.StringIO()
-        if reg_meta:
-            buf.write(store.get(reg_meta["id"]).decode("utf-8"))
-        else:
-            csv.writer(buf, lineterminator="\n").writerow(REG_COLS)
-        w = csv.writer(buf, lineterminator="\n")
-        w.writerows(new_rows)
-        store.put(REGISTRO, buf.getvalue().encode("utf-8"), "text/csv", reg_meta["id"] if reg_meta else None)
-        prog_box.empty()
-        refresh(store)
-        ss.status_msg = None
-        try:
-            ss.cleared[code] = int(str(val["id"]).split("-")[0])
-        except ValueError:
-            ss.cleared[code] = int(time.time() * 1000)
-        d2, t2 = patient_status(pp, ss.files, ss.nomed)
-        ss.last = code
-        ss.nonce += 1
-        if d2 >= t2:
-            stat[code] = (d2, t2)
-            nxt = next_pending(code)
-            if nxt:
-                ss.goto = nxt
-        else:
-            ss.toast = f"{code}: guardado. Faltan {t2 - d2} casillas para completarlo."
-    except Exception as ex:  # noqa: BLE001
-        prog_box.empty()
-        ss.status_msg = {"id": val["id"], "ok": False, "msg": drive_error_message(ex), "codigo": code}
-    st.rerun()

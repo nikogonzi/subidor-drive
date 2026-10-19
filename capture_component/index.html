@@ -224,7 +224,7 @@ function removeNew(k) { if (!NEW[k]) return; URL.revokeObjectURL(NEW[k].url); de
 /* ---------- dibujo ---------- */
 function renderStatus() {
   const st = document.getElementById("status"), tx = document.getElementById("statusTxt");
-  if (busy) { st.className = "status"; tx.innerHTML = "Subiendo capturas…"; return; }
+  if (busy) { st.className = "status ready"; tx.innerHTML = uploadProgress(); return; }
   if (!active) { st.className = "status ready"; tx.innerHTML = "Todas las casillas listas. Revisa y sube con <b>⌘↵</b>."; return; }
   if (focused) { st.className = "status ready"; tx.innerHTML = `Listo: el próximo <b>⌘V</b> va a <b>${slotLabel(active)}</b> (${SLOTS[active].obsName} · nivel ${SLOTS[active].level}).`; }
   else { st.className = "status idle"; tx.innerHTML = `Haz <b>clic en la grilla</b> para activar el pegado. Siguiente: <b>${slotLabel(active)}</b>.`; }
@@ -315,14 +315,53 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&l
 
 /* ---------- subir ---------- */
 const toDataURL = (blob) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsDataURL(blob); });
+const CHUNK = 2000000;          // ~2 MB de texto por mensaje
+const ACK_TIMEOUT = 120000;    // si no llega confirmación en 2 min, se reenvía
+let UP = null;                 // { id, queue, pos, attempt, timer, files, sentFiles }
 async function doUpload() {
   if (busy || !ARGS) return;
-  const keys = Object.keys(NEW); if (!keys.length && !Object.keys(NOMED).length && !UNMARK.size) return;
-  busy = true; render();
-  const items = [];
-  for (const k of keys) { const n = NEW[k]; items.push({ key: k, data: await toDataURL(n.blob), w: n.w, h: n.h, contour: n.contour, axes: n.axes }); }
-  setValue({ id: Date.now() + "-" + Math.random().toString(36).slice(2), action: "upload", codigo: ARGS.patient.codigo, items,
+  const keys = ORDER.filter((k) => NEW[k]);
+  if (!keys.length && !Object.keys(NOMED).length && !UNMARK.size) return;
+  busy = true; document.getElementById("err").textContent = ""; render();
+  const upId = Date.now() + "-" + Math.random().toString(36).slice(2, 8);
+  const queue = []; let seq = 0;
+  try {
+    for (const k of keys) {
+      const n = NEW[k]; const b64 = (await toDataURL(n.blob)).split(",", 2)[1];
+      const parts = Math.max(1, Math.ceil(b64.length / CHUNK));
+      for (let i = 0; i < parts; i++) queue.push({ action: "chunk", upload_id: upId, seq: seq++, codigo: ARGS.patient.codigo, key: k, i, n: parts,
+        data: b64.slice(i * CHUNK, (i + 1) * CHUNK), meta: { w: n.w, h: n.h, contour: n.contour, axes: n.axes } });
+    }
+  } catch (e) { busy = false; flash("No se pudo leer una de las imágenes. Quítala y vuelve a pegarla."); render(); return; }
+  queue.push({ action: "commit", upload_id: upId, seq: seq++, codigo: ARGS.patient.codigo,
     nomed: Object.entries(NOMED).map(([key, reason]) => ({ key, reason })), unmark: [...UNMARK] });
+  UP = { id: upId, queue, pos: 0, attempt: 0, timer: null, files: keys.length };
+  sendCurrent();
+}
+function sendCurrent() {
+  if (!UP) return;
+  const m = UP.queue[UP.pos];
+  clearTimeout(UP.timer);
+  UP.timer = setTimeout(() => { if (!UP) return; UP.attempt++; if (UP.attempt > 3) failUpload("La conexión con el servidor se interrumpió. Tus capturas siguen guardadas: pulsa Subir para reintentar."); else sendCurrent(); }, ACK_TIMEOUT);
+  setValue(Object.assign({ id: UP.id + "-" + m.seq + "-" + UP.attempt }, m));
+  renderStatus();
+}
+function failUpload(msg) { if (UP) clearTimeout(UP.timer); UP = null; busy = false; flash(msg); render(); }
+function onAck(ack) {
+  if (!UP || !ack || ack.upload_id !== UP.id) return;
+  if (!ack.ok) { failUpload(ack.msg || "No se pudo subir. Intenta de nuevo."); return; }
+  const m = UP.queue[UP.pos];
+  if (ack.seq !== m.seq) return;
+  UP.pos++; UP.attempt = 0;
+  if (UP.pos < UP.queue.length) sendCurrent(); else clearTimeout(UP.timer);  // tras el commit, Streamlit carga el siguiente paciente
+}
+function uploadProgress() {
+  if (!UP) return "Preparando la subida…";
+  const m = UP.queue[Math.min(UP.pos, UP.queue.length - 1)];
+  const doneFiles = new Set(UP.queue.slice(0, UP.pos).filter((q) => q.action === "chunk" && q.i === q.n - 1).map((q) => q.key)).size;
+  const pct = Math.round(100 * UP.pos / UP.queue.length);
+  if (m.action === "commit") return `Guardando el registro… (${UP.files} de ${UP.files} imágenes en Drive)`;
+  return `Subiendo <b>${slotLabel(m.key)}</b> · ${doneFiles} de ${UP.files} imágenes en Drive (${pct} %)` + (UP.attempt ? ` · reintento ${UP.attempt}` : "");
 }
 document.getElementById("up").onclick = doUpload;
 
@@ -333,7 +372,7 @@ window.addEventListener("message", async (event) => {
   if (data.theme) applyTheme(data.theme);
   const first = !ARGS || ARGS.patient.codigo !== args.patient.codigo;
   ARGS = args; SLOTS = {}; for (const s of args.slots) SLOTS[s.key] = s;
-  if (args.status && args.status.id !== lastStatusId) { lastStatusId = args.status.id; if (!args.status.ok) { busy = false; flash(args.status.msg || "No se pudo subir. Intenta de nuevo."); } }
+  if (args.ack) onAck(args.ack);
   if (first) {
     const saved = await DB.getAll(args.patient.codigo + "|");
     const clearedTs = (args.cleared || {})[args.patient.codigo] || 0;
