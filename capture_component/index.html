@@ -82,7 +82,15 @@
 /* ---------- protocolo de componentes de Streamlit ---------- */
 const post = (type, extra) => window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type }, extra), "*");
 const setValue = (value) => post("streamlit:setComponentValue", { value, dataType: "json" });
-const setHeight = () => post("streamlit:setFrameHeight", { height: document.documentElement.scrollHeight + 2 });
+// Alto = alto del contenido (no del marco), y solo si cambió: evita el bucle marco→contenido→marco.
+let lastH = 0;
+const setHeight = () => {
+  const w = document.getElementById("wrap"); if (!w) return;
+  const h = Math.ceil(w.getBoundingClientRect().height) + 4;
+  if (Math.abs(h - lastH) < 2) return;
+  lastH = h; post("streamlit:setFrameHeight", { height: h });
+};
+if (window.ResizeObserver) new ResizeObserver(() => setHeight()).observe(document.getElementById("wrap"));
 
 /* ---------- estado ---------- */
 const ORDER = ["N_A", "N_B", "N_C", "N_D", "R_A", "R_B", "R_C", "R_D"];
