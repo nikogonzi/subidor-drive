@@ -65,6 +65,12 @@
   .up { font: inherit; font-size: 15px; font-weight: 600; padding: 8px 18px; border-radius: 8px; border: none; background: var(--accent); color: #fff; cursor: pointer; white-space: nowrap; }
   .up:disabled { opacity: .45; cursor: not-allowed; }
   .up kbd { font-family: inherit; font-size: 12px; opacity: .85; margin-left: 6px; }
+  .tprog { position: absolute; left: 6px; right: 6px; top: 28px; height: 18px; border-radius: 9px; background: rgba(0,0,0,.7); overflow: hidden; display: flex; align-items: center; justify-content: center; }
+  .tprog i { position: absolute; left: 0; top: 0; bottom: 0; background: color-mix(in srgb, var(--ok) 70%, transparent); }
+  .tprog span { position: relative; font-size: 11px; font-weight: 700; color: #fff; }
+  .pt .done { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .pt .done b { color: var(--ok); font-size: 16px; }
+  .pt .nextb { font: inherit; font-size: 14px; font-weight: 600; padding: 6px 14px; border-radius: 8px; border: none; background: var(--ok); color: #fff; cursor: pointer; }
   .overlay { position: absolute; inset: 0; background: color-mix(in srgb, var(--bg) 70%, transparent); display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 600; z-index: 5; border-radius: 8px; }
   .err { color: var(--bad); font-size: 13px; }
 </style>
@@ -203,7 +209,7 @@ window.addEventListener("paste", async (e) => {
   active = nextActive(k); render();
 });
 let flashT = null;
-function flash(msg) { const el = document.getElementById("err"); el.textContent = msg; clearTimeout(flashT); flashT = setTimeout(() => (el.textContent = ""), 5000); setHeight(); }
+function flash(msg, persist) { const el = document.getElementById("err"); el.textContent = msg; clearTimeout(flashT); if (!persist) flashT = setTimeout(() => (el.textContent = ""), 5000); setHeight(); }
 
 /* ---------- foco ---------- */
 let focused = document.hasFocus();
@@ -215,6 +221,7 @@ document.getElementById("wrap").addEventListener("mousedown", () => { window.foc
 window.addEventListener("keydown", (e) => {
   if (e.target && e.target.tagName === "INPUT") return;
   if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); doUpload(); }
+  else if (e.key === "Enter" && ARGS && isComplete()) { e.preventDefault(); goNext(); }
   else if ((e.key === "Backspace" || e.key === "Delete") && active && NEW[active]) { e.preventDefault(); removeNew(active); }
 });
 
@@ -225,6 +232,7 @@ function removeNew(k) { if (!NEW[k]) return; URL.revokeObjectURL(NEW[k].url); de
 function renderStatus() {
   const st = document.getElementById("status"), tx = document.getElementById("statusTxt");
   if (busy) { st.className = "status ready"; tx.innerHTML = uploadProgress(); return; }
+  if (ARGS && isComplete()) { st.className = "status ready"; tx.innerHTML = "Paciente completo y verificado en Drive. Pulsa <b>Enter</b> o <b>Siguiente paciente</b> para continuar."; return; }
   if (!active) { st.className = "status ready"; tx.innerHTML = "Todas las casillas listas. Revisa y sube con <b>⌘↵</b>."; return; }
   if (focused) { st.className = "status ready"; tx.innerHTML = `Listo: el próximo <b>⌘V</b> va a <b>${slotLabel(active)}</b> (${SLOTS[active].obsName} · nivel ${SLOTS[active].level}).`; }
   else { st.className = "status idle"; tx.innerHTML = `Haz <b>clic en la grilla</b> para activar el pegado. Siguiente: <b>${slotLabel(active)}</b>.`; }
@@ -233,9 +241,14 @@ function renderPatient() {
   const p = ARGS.patient;
   document.getElementById("pt").innerHTML = `<span class="code">${esc(p.codigo)}</span><span class="grp ${esc(p.grupo)}">${esc(p.grupoTxt || p.grupo)}</span>`
     + `<span class="meta">par <b>${esc(p.pareja || "—")}</b></span>`
-    + `<span class="cnt"><b>${p.done}</b> de ${p.total} capturas en Drive</span>`
+    + (isComplete() ? `<span class="done"><b>✓ Completo: ${p.done} de ${p.total} en Drive</b><button class="nextb" id="nextb">Siguiente paciente → <kbd>↵</kbd></button></span>`
+                    : `<span class="cnt"><b>${p.done}</b> de ${p.total} capturas en Drive</span>`)
     + (p.missing ? `<span class="miss">⚠ ${esc(p.missing)}</span>` : "");
+  const nb = document.getElementById("nextb"); if (nb) nb.onclick = goNext;
 }
+function isComplete() { const p = ARGS.patient; return p.total > 0 && p.done >= p.total && !busy && !Object.keys(NEW).length && !Object.keys(NOMED).length && !UNMARK.size; }
+let nextSent = false;
+function goNext() { if (nextSent || !isComplete()) return; nextSent = true; setValue({ id: Date.now() + "-next", action: "next", codigo: ARGS.patient.codigo }); }
 function render() {
   if (!ARGS) return;
   renderPatient();
@@ -297,6 +310,11 @@ function tile(k) {
     const ch = document.createElement("div"); ch.className = "checks";
     ch.innerHTML = `<span class="chk ${n.contour ? "okc" : "b"}">${n.contour ? "contorno ✓" : "sin contorno"}</span>` + (n.axes ? `<span class="chk okc">ejes ✓</span>` : "") + warnings(k).map(([c, t]) => `<span class="chk ${c}">${t}</span>`).join("");
     el.appendChild(ch);
+    if (UP && UP.mode === "direct" && (UP.prog[k] != null || UP.done[k])) {
+      const pr = document.createElement("div"); pr.className = "tprog";
+      pr.innerHTML = UP.done[k] ? `<span>✓ en Drive</span>` : `<i style="width:${Math.round((UP.prog[k] || 0) * 100)}%"></i><span>${Math.round((UP.prog[k] || 0) * 100)} %</span>`;
+      el.appendChild(pr);
+    }
   } else if (ex) {
     el.classList.add("existing");
     el.innerHTML = (ex.thumb ? `<img alt="" src="${ex.thumb}">` : `<div class="hint">En Drive</div>`) + `<span class="badge">en Drive</span>` + `<div class="checks">${ex.axes ? `<span class="chk okc">ejes ✓</span>` : ""}${active === k ? `<span class="chk w">pega para reemplazar</span>` : ""}</div>`;
@@ -318,25 +336,103 @@ const toDataURL = (blob) => new Promise((res, rej) => { const r = new FileReader
 const CHUNK = 2000000;          // ~2 MB de texto por mensaje
 const ACK_TIMEOUT = 120000;    // si no llega confirmación en 2 min, se reenvía
 let UP = null;                 // { id, queue, pos, attempt, timer, files, sentFiles }
+const PARALLEL = 3;
 async function doUpload() {
   if (busy || !ARGS) return;
   const keys = ORDER.filter((k) => NEW[k]);
   if (!keys.length && !Object.keys(NOMED).length && !UNMARK.size) return;
-  busy = true; document.getElementById("err").textContent = ""; render();
+  busy = true; document.getElementById("err").textContent = "";
   const upId = Date.now() + "-" + Math.random().toString(36).slice(2, 8);
-  const queue = []; let seq = 0;
-  try {
-    for (const k of keys) {
-      const n = NEW[k]; const b64 = (await toDataURL(n.blob)).split(",", 2)[1];
-      const parts = Math.max(1, Math.ceil(b64.length / CHUNK));
-      for (let i = 0; i < parts; i++) queue.push({ action: "chunk", upload_id: upId, seq: seq++, codigo: ARGS.patient.codigo, key: k, i, n: parts,
-        data: b64.slice(i * CHUNK, (i + 1) * CHUNK), meta: { w: n.w, h: n.h, contour: n.contour, axes: n.axes } });
+  UP = { id: upId, mode: "direct", queue: [], pos: 0, attempt: 0, timer: null, files: keys.length, prog: {}, done: {}, uploaded: [], t0: Date.now(), bytes: 0 };
+  for (const k of keys) UP.bytes += NEW[k].blob.size;
+  setValue({ id: upId + "-busy", action: "busy", codigo: ARGS.patient.codigo });
+  render();
+  if (keys.length) {
+    const r = await directUpload(keys);
+    if (!UP || UP.id !== upId) return;
+    if (r === "fallback") { UP.mode = "chunk"; UP.prog = {}; UP.done = {}; UP.uploaded = []; return chunkUpload(keys); }
+    if (r !== "ok") return failUpload(r);
+  }
+  sendCommit();
+}
+function sendCommit() {
+  if (!UP) return;
+  const m = { action: "commit", upload_id: UP.id, seq: "commit", codigo: ARGS.patient.codigo, uploaded: UP.uploaded,
+    nomed: Object.entries(NOMED).map(([key, reason]) => ({ key, reason })), unmark: [...UNMARK] };
+  UP.committing = true; clearTimeout(UP.timer);
+  UP.timer = setTimeout(() => { if (!UP) return; UP.attempt++; if (UP.attempt > 2) failUpload("El servidor no confirmó la subida. Revisa la grilla tras recargar (⌘⇧R); tus capturas siguen guardadas."); else sendCommit(); }, ACK_TIMEOUT);
+  setValue(Object.assign({ id: UP.id + "-commit-" + UP.attempt }, m));
+  renderStatus();
+}
+/* subida directa navegador → Google Drive (con el permiso temporal que entrega la app) */
+function driveRequest(k) {
+  return new Promise((resolve) => {
+    const n = NEW[k], name = ARGS.drive.names[k], exId = SLOTS[k].existing && SLOTS[k].existing.id && !UP.forceCreate?.[k] ? SLOTS[k].existing.id : null;
+    const xhr = new XMLHttpRequest(); let body;
+    if (exId) {
+      xhr.open("PATCH", `https://www.googleapis.com/upload/drive/v3/files/${encodeURIComponent(exId)}?uploadType=media&fields=id,name,size`);
+      xhr.setRequestHeader("Content-Type", "image/png"); body = n.blob;
+    } else {
+      const b = "npc" + Math.random().toString(36).slice(2);
+      xhr.open("POST", "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,size");
+      xhr.setRequestHeader("Content-Type", `multipart/related; boundary=${b}`);
+      const meta = JSON.stringify({ name, parents: [ARGS.drive.folder], mimeType: "image/png" });
+      body = new Blob([`--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${b}\r\nContent-Type: image/png\r\n\r\n`, n.blob, `\r\n--${b}--\r\n`]);
     }
-  } catch (e) { busy = false; flash("No se pudo leer una de las imágenes. Quítala y vuelve a pegarla."); render(); return; }
-  queue.push({ action: "commit", upload_id: upId, seq: seq++, codigo: ARGS.patient.codigo,
-    nomed: Object.entries(NOMED).map(([key, reason]) => ({ key, reason })), unmark: [...UNMARK] });
-  UP = { id: upId, queue, pos: 0, attempt: 0, timer: null, files: keys.length };
-  sendCurrent();
+    xhr.setRequestHeader("Authorization", "Bearer " + ARGS.drive.token);
+    xhr.timeout = 300000;
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable && UP) { UP.prog[k] = e.loaded / e.total; throttledRender(); } };
+    xhr.onload = () => { let j = null; try { j = JSON.parse(xhr.responseText); } catch (e) {} resolve({ status: xhr.status, id: j && j.id, replaced: !!exId }); };
+    xhr.onerror = () => resolve({ status: 0 });
+    xhr.ontimeout = () => resolve({ status: 0 });
+    xhr.send(body);
+  });
+}
+let rT = null;
+function throttledRender() { if (rT) return; rT = setTimeout(() => { rT = null; render(); }, 200); }
+async function directUpload(keys) {
+  const pending = keys.slice(); let fatal = null, anyOk = false, netFails = 0;
+  async function worker() {
+    while (pending.length && !fatal) {
+      const k = pending.shift();
+      let ok = false;
+      for (let attempt = 0; attempt < 4 && !ok && !fatal; attempt++) {
+        if (attempt) await new Promise((r) => setTimeout(r, 1500 * attempt));
+        UP.prog[k] = 0; const r = await driveRequest(k);
+        if (r.status >= 200 && r.status < 300 && r.id) {
+          ok = true; anyOk = true; UP.done[k] = true; UP.prog[k] = 1;
+          const n = NEW[k]; UP.uploaded.push({ key: k, id: r.id, replaced: r.replaced, w: n.w, h: n.h, contour: n.contour, axes: n.axes });
+        } else if (r.status === 404 && !(UP.forceCreate && UP.forceCreate[k])) {
+          UP.forceCreate = UP.forceCreate || {}; UP.forceCreate[k] = true;  // el archivo anterior ya no existe: crear uno nuevo
+        } else if (r.status === 401 || r.status === 403) {
+          fatal = "Google Drive rechazó el permiso (puede haber vencido). Recarga la página con ⌘⇧R y vuelve a subir: tus capturas siguen guardadas.";
+        } else if (r.status === 0) { netFails++; }
+      }
+      if (!ok && !fatal) {
+        if (!anyOk && netFails >= 4) { fatal = "fallback"; }
+        else fatal = `No se pudo subir ${slotLabel(k)} después de varios intentos. Revisa la conexión y vuelve a pulsar Subir.`;
+      }
+      render();
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(PARALLEL, keys.length) }, worker));
+  return fatal || "ok";
+}
+/* método de respaldo: trozos a través de la app */
+function chunkUpload(keys) {
+  (async () => {
+    const queue = []; let seq = 0;
+    try {
+      for (const k of keys) {
+        const n = NEW[k]; const b64 = (await toDataURL(n.blob)).split(",", 2)[1];
+        const parts = Math.max(1, Math.ceil(b64.length / CHUNK));
+        for (let i = 0; i < parts; i++) queue.push({ action: "chunk", upload_id: UP.id, seq: seq++, codigo: ARGS.patient.codigo, key: k, i, n: parts,
+          data: b64.slice(i * CHUNK, (i + 1) * CHUNK), meta: { w: n.w, h: n.h, contour: n.contour, axes: n.axes } });
+      }
+    } catch (e) { return failUpload("No se pudo leer una de las imágenes. Quítala y vuelve a pegarla."); }
+    UP.queue = queue; UP.pos = 0; UP.attempt = 0;
+    sendCurrent();
+  })();
 }
 function sendCurrent() {
   if (!UP) return;
@@ -346,22 +442,29 @@ function sendCurrent() {
   setValue(Object.assign({ id: UP.id + "-" + m.seq + "-" + UP.attempt }, m));
   renderStatus();
 }
-function failUpload(msg) { if (UP) clearTimeout(UP.timer); UP = null; busy = false; flash(msg); render(); }
+function failUpload(msg) { if (UP) { clearTimeout(UP.timer); setValue({ id: UP.id + "-idle", action: "idle", codigo: ARGS.patient.codigo }); } UP = null; busy = false; flash("⚠ " + msg, true); render(); }
 function onAck(ack) {
   if (!UP || !ack || ack.upload_id !== UP.id) return;
   if (!ack.ok) { failUpload(ack.msg || "No se pudo subir. Intenta de nuevo."); return; }
   const m = UP.queue[UP.pos];
-  if (ack.seq !== m.seq) return;
+  if (!m || ack.seq !== m.seq) return;
   UP.pos++; UP.attempt = 0;
-  if (UP.pos < UP.queue.length) sendCurrent(); else clearTimeout(UP.timer);  // tras el commit, Streamlit carga el siguiente paciente
+  if (UP.pos < UP.queue.length) sendCurrent(); else { UP.attempt = 0; sendCommit(); }
 }
 function uploadProgress() {
   if (!UP) return "Preparando la subida…";
-  const m = UP.queue[Math.min(UP.pos, UP.queue.length - 1)];
-  const doneFiles = new Set(UP.queue.slice(0, UP.pos).filter((q) => q.action === "chunk" && q.i === q.n - 1).map((q) => q.key)).size;
-  const pct = Math.round(100 * UP.pos / UP.queue.length);
-  if (m.action === "commit") return `Guardando el registro… (${UP.files} de ${UP.files} imágenes en Drive)`;
-  return `Subiendo <b>${slotLabel(m.key)}</b> · ${doneFiles} de ${UP.files} imágenes en Drive (${pct} %)` + (UP.attempt ? ` · reintento ${UP.attempt}` : "");
+  if (UP.committing) return "Verificando en Drive y guardando el registro…";
+  const sec = (Date.now() - UP.t0) / 1000;
+  if (UP.mode === "chunk") {
+    const m = UP.queue[Math.min(UP.pos, UP.queue.length - 1)];
+    const pct = UP.queue.length ? Math.round(100 * UP.pos / UP.queue.length) : 0;
+    return m ? `Subiendo (método de respaldo) <b>${slotLabel(m.key)}</b> · ${pct} %` + (UP.attempt ? ` · reintento ${UP.attempt}` : "") : "Subiendo…";
+  }
+  const keys = Object.keys(UP.prog); let done = 0, frac = 0;
+  for (const k of ORDER) if (NEW[k]) { const p = UP.done[k] ? 1 : (UP.prog[k] || 0); frac += p * NEW[k].blob.size; if (UP.done[k]) done++; }
+  const pct = UP.bytes ? Math.round(100 * frac / UP.bytes) : 0;
+  const speed = sec > 1 ? (frac / 1e6 / sec).toFixed(1) + " MB/s" : "";
+  return `Subiendo directo a Drive · <b>${done} de ${UP.files}</b> imágenes listas · ${pct} %` + (speed ? ` · ${speed}` : "");
 }
 document.getElementById("up").onclick = doUpload;
 
@@ -383,6 +486,7 @@ window.addEventListener("message", async (event) => {
       if (SLOTS[key] && SLOTS[key].available && v && v.blob) { NEW[key] = Object.assign({ blob: v.blob, url: URL.createObjectURL(v.blob) }, v.info); restoredCount++; } }
     document.getElementById("restored").textContent = restoredCount ? `Se recuperaron ${restoredCount} casilla${restoredCount > 1 ? "s" : ""} sin subir` : "";
     active = nextActive(null);
+    if (args.busy && !UP) setValue({ id: Date.now() + "-idle", action: "idle", codigo: args.patient.codigo });
   }
   render();
 });

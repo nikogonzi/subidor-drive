@@ -93,8 +93,29 @@ class DriveStore:
                             client_secret=o["client_secret"], token_uri="https://oauth2.googleapis.com/token",
                             scopes=["https://www.googleapis.com/auth/drive.file"])
         creds.refresh(Request())
+        self.creds, self._Request = creds, Request
         self.svc = build("drive", "v3", credentials=creds, cache_discovery=False)
         self.root = st.secrets["drive"]["root_folder_id"]
+        self.dups = {}
+
+    def token(self):
+        """Permiso temporal (1 h) para que el navegador suba directo a Drive; se renueva si quedan < 15 min."""
+        from datetime import timezone
+        exp = self.creds.expiry
+        left = (exp.replace(tzinfo=timezone.utc) - datetime.now(timezone.utc)).total_seconds() if exp else 0
+        if not self.creds.valid or left < 900:
+            self.creds.refresh(self._Request())
+        return self.creds.token
+
+    def verify(self, file_id):
+        try:
+            f = self.svc.files().get(fileId=file_id, fields="id, name, size, trashed, modifiedTime").execute()
+            return None if f.get("trashed") else f
+        except Exception:  # noqa: BLE001
+            return None
+
+    def trash(self, file_id):
+        self.svc.files().update(fileId=file_id, body={"trashed": True}).execute()
 
     def list_files(self):
         out, tok = {}, None
@@ -103,7 +124,12 @@ class DriveStore:
                 q=f"'{self.root}' in parents and trashed = false and mimeType != 'application/vnd.google-apps.folder'",
                 fields="nextPageToken, files(id, name, modifiedTime)", pageSize=1000, pageToken=tok).execute()
             for f in r.get("files", []):
-                out[f["name"]] = {"id": f["id"], "mtime": f.get("modifiedTime", "")}
+                m = {"id": f["id"], "mtime": f.get("modifiedTime", "")}
+                if f["name"] in out:  # nombre repetido: se conserva el más reciente
+                    self.dups.setdefault(f["name"], set()).update({out[f["name"]]["id"], f["id"]})
+                    if m["mtime"] < out[f["name"]]["mtime"]:
+                        continue
+                out[f["name"]] = m
             tok = r.get("nextPageToken")
             if not tok:
                 return out
@@ -143,6 +169,18 @@ class LocalStore:
     def get(self, file_id):
         return open(os.path.join(self.path, file_id), "rb").read()
 
+    dups = {}
+
+    def token(self):
+        return "token-local-de-prueba"
+
+    def verify(self, file_id):
+        p = os.path.join(self.path, file_id)
+        return {"id": file_id, "name": file_id, "size": str(os.path.getsize(p))} if os.path.exists(p) else None
+
+    def trash(self, file_id):
+        os.remove(os.path.join(self.path, file_id))
+
 
 @st.cache_resource
 def get_store():
@@ -151,6 +189,8 @@ def get_store():
 
 
 def drive_error_message(ex):
+    if isinstance(ex, RuntimeError):
+        return str(ex)
     txt = f"{type(ex).__name__}: {ex}"
     if "invalid_grant" in txt or "RefreshError" in txt or "401" in txt:
         return ("No se pudo conectar con Google Drive: el permiso de acceso expiró o fue revocado. "
@@ -228,6 +268,7 @@ ss.setdefault("cleared", {})
 ss.setdefault("toast", None)
 ss.setdefault("ack", None)
 ss.setdefault("uploads", {})
+ss.setdefault("busy", None)
 
 try:
     store = get_store()
@@ -259,21 +300,34 @@ def next_pending(after=None):
 # confirmación (ack) antes del siguiente; al final envía "commit".
 # --------------------------------------------------------------------------
 def handle_msg(val):
-    """Procesa un mensaje de la grilla. Devuelve "commit", "ack" o None (nada nuevo)."""
+    """Procesa un mensaje de la grilla. Devuelve "commit", "ack", "rerun" o None (nada nuevo)."""
     if not (isinstance(val, dict) and val.get("id")) or val["id"] in ss.done_ids:
         return None
     ss.done_ids.add(val["id"])
     act, up, seq, code = val.get("action"), val.get("upload_id"), val.get("seq"), val.get("codigo")
     pp = by_code.get(code)
+    if act == "busy":  # empezó una subida: bloquear la navegación
+        ss.busy = {"codigo": code, "t": time.time()}
+        return "rerun"
+    if act == "idle":  # la subida falló o se canceló: liberar
+        ss.busy = None
+        return "rerun"
+    if act == "next":  # el usuario pidió pasar al siguiente paciente
+        nxt = next_pending(code)
+        if nxt:
+            ss.goto = nxt
+        else:
+            ss.toast = "No quedan pacientes pendientes 🎉"
+        return "rerun"
     U = ss.uploads.setdefault(up, {"files": {}, "rows": [], "seqs": set()})
-    if seq in U["seqs"]:  # reenvío de un trozo ya procesado: solo confirmar
+    if act == "chunk" and seq in U["seqs"]:  # reenvío de un trozo ya procesado: solo confirmar
         ss.ack = {"upload_id": up, "seq": seq, "ok": True}
         return "ack"
     try:
         if pp is None:
             raise ValueError(f"Código desconocido: {code}")
         now = datetime.now().isoformat(timespec="seconds")
-        if act == "chunk":
+        if act == "chunk":  # método de respaldo: la imagen llega por trozos a Python
             key = val["key"]
             f = U["files"].setdefault(key, {"parts": {}, "n": int(val["n"]), "meta": val.get("meta") or {}})
             f["parts"][int(val["i"])] = val["data"]
@@ -292,39 +346,62 @@ def handle_msg(val):
             return "ack"
         if act == "commit":
             rows = U["rows"]
+            # imágenes subidas directo desde el navegador: verificar en Drive antes de registrarlas
+            missing = []
+            for it in val.get("uploaded", []):
+                o, l = it["key"].split("_")
+                name = file_name(pp, o, l)
+                meta = store.verify(it["id"])
+                if not meta or meta.get("name") != name:
+                    missing.append(f"{o}·{l}")
+                    continue
+                rows.append([now, code, pp["grupo"], pp["pareja"], o, l, name, "reemplazada" if it.get("replaced") else "subida", "",
+                             it.get("w", ""), it.get("h", ""), int(bool(it.get("contour"))), int(bool(it.get("axes")))])
             for nm in val.get("nomed", []):
                 o, l = nm["key"].split("_")
                 rows.append([now, code, pp["grupo"], pp["pareja"], o, l, "", "no_medible", nm.get("reason", ""), "", "", "", ""])
             for k in val.get("unmark", []):
                 o, l = k.split("_")
                 rows.append([now, code, pp["grupo"], pp["pareja"], o, l, "", "desmarcado", "", "", "", "", ""])
-            reg_meta = store.list_files().get(REGISTRO)  # se relee para no perder líneas
-            buf = io.StringIO()
-            if reg_meta:
-                buf.write(store.get(reg_meta["id"]).decode("utf-8"))
-            else:
-                csv.writer(buf, lineterminator="\n").writerow(REG_COLS)
-            csv.writer(buf, lineterminator="\n").writerows(rows)
-            store.put(REGISTRO, buf.getvalue().encode("utf-8"), "text/csv", reg_meta["id"] if reg_meta else None)
+            if rows:
+                reg_meta = store.list_files().get(REGISTRO)  # se relee para no perder líneas
+                buf = io.StringIO()
+                if reg_meta:
+                    buf.write(store.get(reg_meta["id"]).decode("utf-8"))
+                else:
+                    csv.writer(buf, lineterminator="\n").writerow(REG_COLS)
+                csv.writer(buf, lineterminator="\n").writerows(rows)
+                store.put(REGISTRO, buf.getvalue().encode("utf-8"), "text/csv", reg_meta["id"] if reg_meta else None)
             ss.uploads.pop(up, None)
             refresh(store)
+            # si un reintento creó dos archivos con el mismo nombre, se deja solo el confirmado
+            keep = {it["id"] for it in val.get("uploaded", [])}
+            for name, ids in list(getattr(store, "dups", {}).items()):
+                if name.startswith(code + "_") and keep & ids:
+                    for fid in ids - keep:
+                        try:
+                            store.trash(fid)
+                        except Exception:  # noqa: BLE001
+                            pass
+                    store.dups.pop(name, None)
+            if missing:
+                raise RuntimeError("Drive no confirmó estas imágenes: " + ", ".join(missing) + ". Vuelve a subirlas.")
             try:
                 ss.cleared[code] = int(str(up).split("-")[0])
             except ValueError:
                 ss.cleared[code] = int(time.time() * 1000)
             d2, t2 = patient_status(pp, ss.files, ss.nomed)
             stat[code] = (d2, t2)
-            ss.last, ss.ack = code, None
-            ss.nonce += 1
-            if d2 >= t2:
-                nxt = next_pending(code)
-                if nxt:
-                    ss.goto = nxt
-            else:
-                ss.toast = f"{code}: guardado. Faltan {t2 - d2} casillas para completarlo."
+            ss.last, ss.ack, ss.busy = code, None, None
+            ss.nonce += 1  # la grilla se recarga mostrando lo que quedó en Drive (sin cambiar de paciente)
+            ss.toast = (f"✅ {code} completo: {d2} de {t2} casillas en Drive." if d2 >= t2
+                        else f"{code}: guardado. Faltan {t2 - d2} casillas para completarlo.")
             return "commit"
     except Exception as ex:  # noqa: BLE001
         ss.uploads.pop(up, None)
+        ss.busy = None
+        if act == "commit":
+            refresh(store)
         ss.ack = {"upload_id": up, "seq": seq, "ok": False, "msg": drive_error_message(ex)}
         return "ack"
     return None
@@ -332,8 +409,10 @@ def handle_msg(val):
 
 if "sel" in ss and "goto" not in ss:
     _pending = ss.get(f"grid_{ss.sel}_{ss.nonce}")
-    if handle_msg(_pending) == "commit":
+    if handle_msg(_pending) in ("commit", "rerun"):
         st.rerun()
+if ss.busy and time.time() - ss.busy["t"] > 900:  # seguro: nunca bloquear más de 15 minutos
+    ss.busy = None
 
 if ss.toast:
     st.toast(ss.toast)
@@ -367,9 +446,9 @@ def fmt(code):
 c1, c2, _ = st.columns([2.0, 1.5, 4.5], vertical_alignment="center")
 with c1:
     st.selectbox("Paciente", [p["codigo"] for p in patients], key="sel", format_func=fmt,
-                 label_visibility="collapsed", help="Escribe para buscar un paciente")
+                 label_visibility="collapsed", help="Escribe para buscar un paciente", disabled=bool(ss.busy))
 with c2:
-    if st.button("Siguiente pendiente →", use_container_width=True):
+    if st.button("Siguiente pendiente →", use_container_width=True, disabled=bool(ss.busy)):
         nxt = next_pending(ss.sel)
         if nxt:
             ss.goto = nxt
@@ -411,22 +490,31 @@ for key in ORDER:
             th, w, h = thumb_of(files[name]["id"], files[name]["mtime"])
         except Exception:  # noqa: BLE001
             th, w, h = None, None, None
-        existing = {"thumb": th, "w": w, "h": h, "axes": axes_reg.get(name)}
+        existing = {"thumb": th, "w": w, "h": h, "axes": axes_reg.get(name), "id": files[name]["id"]}
     slots.append({
         "key": key, "obs": o, "obsName": OBS[o], "level": l, "available": available,
         "reason": (p["comentario"] if not available else ""), "existing": existing,
         "nomed": nomed.get((p["codigo"], o, l)),
     })
 
+try:
+    drive_token = store.token()
+except Exception as ex:  # noqa: BLE001
+    st.error(drive_error_message(ex))
+    st.stop()
+drive_folder = getattr(store, "root", "local")
 val = _grid(
     patient={"codigo": p["codigo"], "grupo": p["grupo"], "grupoTxt": GRUPO_TXT[p["grupo"]], "pareja": p["pareja"],
              "done": d, "total": t, "missing": miss_txt},
     slots=slots, obsNames=OBS, levelNames=NIVELES,
-    ack=ss.ack, cleared=ss.cleared,
+    ack=ss.ack, cleared=ss.cleared, busy=bool(ss.busy),
+    drive={"token": drive_token, "folder": drive_folder, "names": {k: file_name(p, *k.split("_")) for k in ORDER}},
     key=f"grid_{p['codigo']}_{ss.nonce}", default=None,
 )
 if handle_msg(val):  # respaldo, por si el valor no estaba disponible antes de dibujar la grilla
     st.rerun()
+if ss.busy:
+    st.caption("⏳ Subiendo imágenes: el cambio de paciente está bloqueado hasta que termine.")
 
 st.caption("Captura con ⌃⇧⌘4 (o ⌘⇧5 + Enter si guardaste la selección) y pega con ⌘V: la imagen entra en la casilla marcada y se avanza sola. "
            "Para reemplazar una imagen, haz clic en su casilla y vuelve a pegar. Sube con ⌘↵.")
