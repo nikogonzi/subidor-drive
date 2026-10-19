@@ -3,153 +3,334 @@
 <head>
 <meta charset="utf-8" />
 <style>
+  :root {
+    --bg: #ffffff; --fg: #1f2329; --muted: #6b7380; --line: #d5dae1; --tile: #f6f7f9;
+    --accent: #ff4b4b; --ok: #1f9d55; --warn: #c27c0e; --bad: #d23c3c; --n: #2f6fde; --r: #a24bd6;
+    --font: "Source Sans Pro", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0e1117; --fg: #fafafa; --muted: #9aa3ad; --line: #30363f; --tile: #171b22; }
+  }
   * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  }
-  .slot {
-    border: 2px dashed #b8c2cc;
-    border-radius: 10px;
-    background: #f7f9fb;
-    height: 92px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    transition: all 0.12s ease;
-    text-align: center;
-    padding: 6px;
-    user-select: none;
-    outline: none;
-  }
-  .slot:hover { border-color: #667eea; background: #eef2ff; }
-  .slot.active {
-    border-color: #667eea;
-    border-style: solid;
-    background: #eef2ff;
-    box-shadow: 0 0 0 3px rgba(102,126,234,0.25);
-  }
-  .slot.filled {
-    border-style: solid;
-    border-color: #2e7d32;
-    background: #ffffff;
-    padding: 4px;
-    height: 92px;
-    position: relative;
-  }
-  .slot.filled img {
-    max-width: 100%;
-    max-height: 72px;
-    border-radius: 6px;
-    display: block;
-  }
-  .title { font-weight: 700; font-size: 14px; color: #2d3748; margin-bottom: 4px; }
-  .hint  { font-size: 11px; color: #718096; line-height: 1.3; }
-  .active .hint { color: #667eea; font-weight: 600; }
-  .filled .title-mini {
-    position: absolute; top: 3px; left: 6px;
-    font-size: 10px; font-weight: 700; color: #2e7d32;
-    background: rgba(255,255,255,0.85); padding: 0 4px; border-radius: 4px;
-  }
-  .clear-btn {
-    position: absolute; top: 3px; right: 5px;
-    font-size: 12px; line-height: 1; color: #fff; background: #c53030;
-    border: none; cursor: pointer; border-radius: 50%;
-    width: 18px; height: 18px; padding: 0;
-  }
+  html, body { margin: 0; padding: 0; background: transparent; color: var(--fg); font-family: var(--font); font-size: 14px; }
+  .wrap { display: flex; flex-direction: column; gap: 8px; outline: none; }
+  .status { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--tile); }
+  .status .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
+  .status.ready .dot { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent); }
+  .status.idle { border-color: color-mix(in srgb, var(--warn) 60%, var(--line)); }
+  .status.idle .dot { background: var(--warn); }
+  .status b { font-weight: 600; }
+  .status .restored { margin-left: auto; color: var(--warn); }
+  .grid { display: grid; grid-template-columns: 74px repeat(4, minmax(0, 1fr)); gap: 6px; align-items: stretch; }
+  .colh { font-size: 12px; color: var(--muted); text-align: center; padding-bottom: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .colh b { color: var(--fg); font-size: 13px; }
+  .rowh { display: flex; flex-direction: column; justify-content: center; gap: 2px; padding-left: 8px; border-left: 4px solid var(--n); }
+  .rowh.R { border-left-color: var(--r); }
+  .rowh b { font-size: 16px; } .rowh span { font-size: 12px; color: var(--muted); }
+  .tile { position: relative; height: 150px; border: 2px dashed var(--line); border-radius: 8px; background: var(--tile); cursor: pointer; overflow: hidden; display: flex; align-items: center; justify-content: center; text-align: center; padding: 4px; user-select: none; }
+  .tile:hover { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); }
+  .tile.active { border-style: solid; border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .tile.new { border-style: solid; border-color: var(--ok); }
+  .tile.new.active { border-color: var(--accent); }
+  .tile.existing { border-style: solid; }
+  .tile.na { cursor: default; background: repeating-linear-gradient(135deg, transparent 0 7px, color-mix(in srgb, var(--line) 55%, transparent) 7px 8px); border-style: solid; }
+  .tile.nomed { border-style: solid; cursor: default; }
+  .tile img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; border-radius: 4px; }
+  .tile .hint { font-size: 12px; color: var(--muted); line-height: 1.3; }
+  .tile.active .hint { color: var(--accent); font-weight: 600; font-size: 13px; }
+  .badge { position: absolute; top: 4px; left: 4px; font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 10px; background: rgba(0,0,0,.66); color: #fff; }
+  .badge.new { background: var(--ok); } .badge.repl { background: var(--warn); }
+  .x { position: absolute; top: 3px; right: 3px; width: 22px; height: 22px; border-radius: 50%; border: none; background: rgba(0,0,0,.66); color: #fff; font-size: 15px; line-height: 22px; padding: 0; cursor: pointer; }
+  .checks { position: absolute; bottom: 4px; left: 4px; right: 4px; display: flex; flex-wrap: wrap; gap: 3px; justify-content: center; }
+  .chk { font-size: 11px; padding: 1px 6px; border-radius: 10px; background: rgba(0,0,0,.66); color: #fff; white-space: nowrap; }
+  .chk.okc { background: color-mix(in srgb, var(--ok) 85%, #000); }
+  .chk.w { background: color-mix(in srgb, var(--warn) 90%, #000); }
+  .chk.b { background: var(--bad); }
+  .link { background: none; border: none; color: var(--muted); text-decoration: underline; font-size: 11px; cursor: pointer; padding: 2px; font-family: inherit; }
+  .nmform { display: flex; flex-direction: column; gap: 4px; width: 100%; padding: 0 6px; }
+  .nmform input { font: inherit; font-size: 12px; padding: 3px 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--fg); width: 100%; }
+  .nmform div { display: flex; gap: 6px; justify-content: center; }
+  .nmform button { font: inherit; font-size: 12px; padding: 2px 8px; border-radius: 4px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); cursor: pointer; }
+  .bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .bar .sum { flex: 1 1 260px; font-size: 13px; color: var(--muted); min-width: 0; }
+  .bar .sum b { color: var(--fg); }
+  .bar .warns { color: var(--warn); }
+  .up { font: inherit; font-size: 15px; font-weight: 600; padding: 8px 18px; border-radius: 8px; border: none; background: var(--accent); color: #fff; cursor: pointer; white-space: nowrap; }
+  .up:disabled { opacity: .45; cursor: not-allowed; }
+  .up kbd { font-family: inherit; font-size: 12px; opacity: .85; margin-left: 6px; }
+  .overlay { position: absolute; inset: 0; background: color-mix(in srgb, var(--bg) 70%, transparent); display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 600; z-index: 5; border-radius: 8px; }
+  .err { color: var(--bad); font-size: 13px; }
 </style>
 </head>
 <body>
-  <div id="slot" class="slot" tabindex="0"></div>
-
+<div class="wrap" id="wrap" tabindex="0">
+  <div class="status idle" id="status"><span class="dot"></span><span id="statusTxt"></span><span class="restored" id="restored"></span></div>
+  <div class="grid" id="grid"></div>
+  <div class="bar"><div class="sum" id="sum"></div><button class="up" id="up" disabled>Subir</button></div>
+  <div class="err" id="err"></div>
+</div>
 <script>
-function sendValue(value) {
-  window.parent.postMessage(
-    { isStreamlitMessage: true, type: "streamlit:setComponentValue", value: value }, "*");
+"use strict";
+/* ---------- protocolo de componentes de Streamlit ---------- */
+const post = (type, extra) => window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type }, extra), "*");
+const setValue = (value) => post("streamlit:setComponentValue", { value, dataType: "json" });
+const setHeight = () => post("streamlit:setFrameHeight", { height: document.documentElement.scrollHeight + 2 });
+
+/* ---------- estado ---------- */
+const ORDER = ["N_A", "N_B", "N_C", "N_D", "R_A", "R_B", "R_C", "R_D"];
+let ARGS = null, SLOTS = {}, NEW = {}, NOMED = {}, UNMARK = new Set(), active = null, editingNomed = null, busy = false, lastStatusId = null;
+// NEW[key] = { blob, url, w, h, contour, axes, hash }
+let restoredCount = 0;
+
+/* ---------- respaldo en el navegador (IndexedDB) ---------- */
+const DB = (() => {
+  let dbp = null;
+  const open = () => dbp || (dbp = new Promise((res, rej) => { try { const r = indexedDB.open("captura-npc", 1); r.onupgradeneeded = () => r.result.createObjectStore("caps"); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); } catch (e) { rej(e); } }));
+  const tx = async (mode, fn) => { try { const db = await open(); return await new Promise((res, rej) => { const t = db.transaction("caps", mode); const s = t.objectStore("caps"); const out = fn(s); t.oncomplete = () => res(out && out.result); t.onerror = () => rej(t.error); }); } catch (e) { return null; } };
+  return {
+    put: (k, v) => tx("readwrite", (s) => s.put(v, k)),
+    del: (k) => tx("readwrite", (s) => s.delete(k)),
+    getAll: async (prefix) => { try { const db = await open(); return await new Promise((res) => { const out = []; const t = db.transaction("caps", "readonly"); const c = t.objectStore("caps").openCursor(); c.onsuccess = () => { const cur = c.result; if (!cur) return res(out); if (String(cur.key).startsWith(prefix)) out.push([cur.key, cur.value]); cur.continue(); }; c.onerror = () => res(out); }); } catch (e) { return []; } },
+    clearCode: async (code) => { const all = await DB.getAll(code + "|"); for (const [k] of all) await DB.del(k); },
+  };
+})();
+
+/* ---------- revisiones de la imagen ---------- */
+function sqPass(src, w, h, r, horiz, dil) {
+  const out = new Uint8Array(w * h), win = 2 * r + 1;
+  if (horiz) for (let y = 0; y < h; y++) { const o = y * w; let s = 0;
+    for (let x = -r; x <= r; x++) s += (x >= 0 && x < w) ? src[o + x] : (dil ? 0 : 1);
+    for (let x = 0; x < w; x++) { out[o + x] = dil ? (s > 0) : (s === win); const a = x + r + 1, b = x - r; s += (a < w ? src[o + a] : (dil ? 0 : 1)) - (b >= 0 ? src[o + b] : (dil ? 0 : 1)); } }
+  else for (let x = 0; x < w; x++) { let s = 0;
+    for (let y = -r; y <= r; y++) s += (y >= 0 && y < h) ? src[y * w + x] : (dil ? 0 : 1);
+    for (let y = 0; y < h; y++) { out[y * w + x] = dil ? (s > 0) : (s === win); const a = y + r + 1, b = y - r; s += (a < h ? src[a * w + x] : (dil ? 0 : 1)) - (b >= 0 ? src[b * w + x] : (dil ? 0 : 1)); } }
+  return out;
 }
-function setFrameHeight(h) {
-  window.parent.postMessage(
-    { isStreamlitMessage: true, type: "streamlit:setFrameHeight", height: h }, "*");
-}
-function ready() {
-  window.parent.postMessage(
-    { isStreamlitMessage: true, type: "streamlit:componentReady", apiVersion: 1 }, "*");
-}
-
-const slot = document.getElementById("slot");
-let LABEL = "Nivel";
-let currentData = null;
-let isActive = false;
-
-function reportHeight() { setFrameHeight(100); }
-
-function renderEmpty() {
-  slot.className = "slot" + (isActive ? " active" : "");
-  slot.innerHTML =
-    '<div class="title">' + LABEL + '</div>' +
-    '<div class="hint">' +
-      (isActive ? "Esperando imagen &mdash; &#8984;V" : "Clic y pega con &#8984;V") +
-    '</div>';
-  reportHeight();
-}
-
-function renderFilled(dataUrl) {
-  slot.className = "slot filled";
-  slot.innerHTML =
-    '<div class="title-mini">' + LABEL + '</div>' +
-    '<button class="clear-btn" id="clearBtn" title="Quitar">&times;</button>' +
-    '<img src="' + dataUrl + '" />';
-  document.getElementById("clearBtn").addEventListener("click", function (e) {
-    e.stopPropagation();
-    currentData = null; isActive = true;
-    sendValue(""); renderEmpty(); slot.focus();
-  });
-  reportHeight();
-}
-
-slot.addEventListener("click", function () {
-  isActive = true; slot.focus();
-  if (!currentData) renderEmpty();
-});
-
-window.addEventListener("paste", function (e) {
-  if (!isActive) return;
-  const items = (e.clipboardData || window.clipboardData).items;
-  for (let i = 0; i < items.length; i++) {
-    if (items[i].type.indexOf("image") !== -1) {
-      const blob = items[i].getAsFile();
-      const reader = new FileReader();
-      reader.onload = function (ev) {
-        currentData = ev.target.result;
-        sendValue(currentData);
-        renderFilled(currentData);
-      };
-      reader.readAsDataURL(blob);
-      e.preventDefault();
-      break;
-    }
+const dil = (m, w, h, r) => sqPass(sqPass(m, w, h, r, true, true), w, h, r, false, true);
+const ero = (m, w, h, r) => sqPass(sqPass(m, w, h, r, true, false), w, h, r, false, false);
+function label8(m, w, h) {
+  const lab = new Int32Array(w * h), st = new Int32Array(w * h), comps = []; let cur = 0;
+  for (let i = 0; i < m.length; i++) {
+    if (!m[i] || lab[i]) continue; cur++; let sp = 0, n = 0, x0 = w, y0 = h, x1 = -1, y1 = -1; st[sp++] = i; lab[i] = cur;
+    while (sp) { const q = st[--sp]; n++; const x = q % w, y = (q / w) | 0;
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const xx = x + dx, yy = y + dy; if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue; const k = yy * w + xx; if (m[k] && !lab[k]) { lab[k] = cur; st[sp++] = k; } } }
+    comps.push({ id: cur, n, x0, y0, x1, y1 });
   }
+  return { lab, comps };
+}
+function fillInterior(lab, id, c, w) { // interior encerrado por el componente, dentro de su caja
+  const cw = c.x1 - c.x0 + 3, ch = c.y1 - c.y0 + 3, ring = new Uint8Array(cw * ch), out = new Uint8Array(cw * ch), st = new Int32Array(cw * ch); let sp = 0;
+  for (let y = 0; y < ch - 2; y++) for (let x = 0; x < cw - 2; x++) ring[(y + 1) * cw + x + 1] = lab[(y + c.y0) * w + x + c.x0] === id ? 1 : 0;
+  const push = (k) => { if (!ring[k] && !out[k]) { out[k] = 1; st[sp++] = k; } };
+  push(0); while (sp) { const q = st[--sp], x = q % cw, y = (q / cw) | 0; if (x > 0) push(q - 1); if (x < cw - 1) push(q + 1); if (y > 0) push(q - cw); if (y < ch - 1) push(q + cw); }
+  let inner = 0; const mask = new Uint8Array(cw * ch); for (let k = 0; k < mask.length; k++) if (!out[k] && !ring[k]) { mask[k] = 1; inner++; }
+  return { inner, mask, cw, ch, ox: c.x0 - 1, oy: c.y0 - 1 };
+}
+async function analyze(blob) {
+  const bmp = await createImageBitmap(blob); const W0 = bmp.width, H0 = bmp.height;
+  const s = Math.min(1, 800 / Math.max(W0, H0)), W = Math.round(W0 * s), H = Math.round(H0 * s);
+  const c = document.createElement("canvas"); c.width = W; c.height = H; const ctx = c.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(bmp, 0, 0, W, H); const d = ctx.getImageData(0, 0, W, H).data;
+  // huella para detectar duplicados (32×32 en gris + tamaño original)
+  const t = document.createElement("canvas"); t.width = t.height = 32; const tx = t.getContext("2d", { willReadFrequently: true }); tx.drawImage(bmp, 0, 0, 32, 32);
+  const td = tx.getImageData(0, 0, 32, 32).data; let hsh = W0 + "x" + H0 + ":"; for (let i = 0; i < td.length; i += 4) hsh += ((td[i] + td[i + 1] + td[i + 2]) / 48 | 0).toString(16);
+  bmp.close();
+  const N = W * H, col = new Uint8Array(N), lc = new Uint8Array(N);
+  for (let i = 0, p = 0; i < N; i++, p += 4) { const mx = Math.max(d[p], d[p + 1], d[p + 2]), mn = Math.min(d[p], d[p + 1], d[p + 2]); if (mx - mn > 40) col[i] = 1; if (mx - mn > 20) lc[i] = 1; }
+  const closed = ero(dil(col, W, H, 2), W, H, 2); for (let i = 0; i < N; i++) closed[i] |= col[i];
+  const L = label8(closed, W, H); let best = null;
+  for (const cc of L.comps) { if (cc.n < 15) continue; const f = fillInterior(L.lab, cc.id, cc, W); if (!best || f.inner > best.inner) best = f; }
+  const contour = !!best && best.inner >= 20;
+  if (best) { const full = new Uint8Array(N); for (let y = 0; y < best.ch; y++) for (let x = 0; x < best.cw; x++) { const X = x + best.ox, Y = y + best.oy; if (X >= 0 && Y >= 0 && X < W && Y < H && best.mask[y * best.cw + x]) full[Y * W + X] = 1; }
+    const ex = dil(full, W, H, 4); for (let i = 0; i < N; i++) if (ex[i]) lc[i] = 0; }
+  const L2 = label8(dil(lc, W, H, 1), W, H); let lines = 0; const minD = 0.2 * Math.min(W, H);
+  for (const cc of L2.comps) { const dd = Math.hypot(cc.x1 - cc.x0 + 1, cc.y1 - cc.y0 + 1); if (dd >= minD && cc.n / dd < 9) lines++; }
+  return { w: W0, h: H0, contour, axes: lines > 0, hash: hsh };
+}
+
+/* ---------- utilidades ---------- */
+const slotLabel = (k) => k.replace("_", "·");
+const isOpen = (k) => { const s = SLOTS[k]; return s && s.available && !(NOMED[k]) && !(s.nomed && !UNMARK.has(k)); };
+const needsImage = (k) => isOpen(k) && !NEW[k] && !SLOTS[k].existing;
+function nextActive(from) { const i0 = from ? ORDER.indexOf(from) : -1; for (let i = i0 + 1; i < ORDER.length; i++) if (needsImage(ORDER[i])) return ORDER[i]; for (let i = 0; i <= i0; i++) if (needsImage(ORDER[i])) return ORDER[i]; return null; }
+function median(a) { if (!a.length) return null; const s = a.slice().sort((x, y) => x - y); return s[s.length >> 1]; }
+function warnings(k) {
+  const it = NEW[k]; if (!it) return [];
+  const out = [];
+  const dup = ORDER.find((o) => o !== k && NEW[o] && NEW[o].hash === it.hash);
+  if (dup) out.push(["b", "idéntica a " + slotLabel(dup)]);
+  const others = ORDER.filter((o) => o !== k).map((o) => NEW[o] ? [NEW[o].w, NEW[o].h] : (SLOTS[o] && SLOTS[o].existing && SLOTS[o].existing.w ? [SLOTS[o].existing.w, SLOTS[o].existing.h] : null)).filter(Boolean);
+  const mw = median(others.map((v) => v[0])), mh = median(others.map((v) => v[1]));
+  if (mw && (Math.abs(it.w - mw) / mw > 0.15 || Math.abs(it.h - mh) / mh > 0.15)) out.push(["w", "tamaño distinto"]);
+  return out;
+}
+
+/* ---------- pegar / soltar ---------- */
+async function putImage(k, blob, fromRestore) {
+  if (!k || !SLOTS[k] || !SLOTS[k].available) return;
+  const info = await analyze(blob);
+  if (NEW[k] && NEW[k].url) URL.revokeObjectURL(NEW[k].url);
+  NEW[k] = Object.assign({ blob, url: URL.createObjectURL(blob) }, info);
+  if (NOMED[k]) delete NOMED[k];
+  if (!fromRestore) DB.put(ARGS.patient.codigo + "|" + k, { blob, info, t: Date.now() });
+}
+window.addEventListener("paste", async (e) => {
+  if (busy || !ARGS) return;
+  const items = (e.clipboardData || {}).items || [];
+  let blob = null; for (const it of items) if (it.type && it.type.startsWith("image/")) { blob = it.getAsFile(); break; }
+  if (!blob) { flash("El portapapeles no tiene una imagen. Captura con ⌃⇧⌘4 y vuelve a pegar."); return; }
+  e.preventDefault();
+  const k = active || nextActive(null);
+  if (!k) { flash("Todas las casillas están completas. Para reemplazar una, haz clic en ella y pega."); return; }
+  await putImage(k, blob, false);
+  active = nextActive(k); render();
+});
+let flashT = null;
+function flash(msg) { const el = document.getElementById("err"); el.textContent = msg; clearTimeout(flashT); flashT = setTimeout(() => (el.textContent = ""), 5000); setHeight(); }
+
+/* ---------- foco ---------- */
+let focused = document.hasFocus();
+window.addEventListener("focus", () => { focused = true; renderStatus(); });
+window.addEventListener("blur", () => { focused = false; renderStatus(); });
+document.getElementById("wrap").addEventListener("mousedown", () => { window.focus(); });
+
+/* ---------- teclado ---------- */
+window.addEventListener("keydown", (e) => {
+  if (e.target && e.target.tagName === "INPUT") return;
+  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); doUpload(); }
+  else if ((e.key === "Backspace" || e.key === "Delete") && active && NEW[active]) { e.preventDefault(); removeNew(active); }
 });
 
-window.addEventListener("message", function (event) {
-  const data = event.data;
-  if (!data || data.type !== "streamlit:render") return;
-  // Streamlit puede entregar los argumentos en data.args o en data.args.args
-  const args = (data.args && data.args.args) ? data.args.args : (data.args || {});
-  if (args.label) LABEL = args.label;
-  if (args.value && args.value.length > 0) {
-    currentData = args.value; renderFilled(currentData);
-  } else if (!currentData) {
-    renderEmpty();
+function saveMarks() { if (ARGS) DB.put(ARGS.patient.codigo + "|marks", { nomed: NOMED, unmark: [...UNMARK], t: Date.now() }); }
+function removeNew(k) { if (!NEW[k]) return; URL.revokeObjectURL(NEW[k].url); delete NEW[k]; DB.del(ARGS.patient.codigo + "|" + k); active = k; render(); }
+
+/* ---------- dibujo ---------- */
+function renderStatus() {
+  const st = document.getElementById("status"), tx = document.getElementById("statusTxt");
+  if (busy) { st.className = "status"; tx.innerHTML = "Subiendo capturas…"; return; }
+  if (!active) { st.className = "status ready"; tx.innerHTML = "Todas las casillas listas. Revisa y sube con <b>⌘↵</b>."; return; }
+  if (focused) { st.className = "status ready"; tx.innerHTML = `Listo: el próximo <b>⌘V</b> va a <b>${slotLabel(active)}</b> (${SLOTS[active].obsName} · nivel ${SLOTS[active].level}).`; }
+  else { st.className = "status idle"; tx.innerHTML = `Haz <b>clic en la grilla</b> para activar el pegado. Siguiente: <b>${slotLabel(active)}</b>.`; }
+}
+function render() {
+  if (!ARGS) return;
+  const g = document.getElementById("grid"); g.textContent = "";
+  g.appendChild(document.createElement("div"));
+  for (const L of ["A", "B", "C", "D"]) { const h = document.createElement("div"); h.className = "colh"; h.innerHTML = `<b>Nivel ${L}</b> · ${ARGS.levelNames[L]}`; g.appendChild(h); }
+  for (const o of ["N", "R"]) {
+    const rh = document.createElement("div"); rh.className = "rowh " + o; rh.innerHTML = `<b>${o}</b><span>${ARGS.obsNames[o]}</span>`; g.appendChild(rh);
+    for (const L of ["A", "B", "C", "D"]) g.appendChild(tile(o + "_" + L));
+  }
+  // resumen
+  const nNew = Object.keys(NEW).length, nNom = Object.keys(NOMED).length, nUn = UNMARK.size;
+  const repl = Object.keys(NEW).filter((k) => SLOTS[k].existing).length;
+  const pend = ORDER.filter((k) => needsImage(k)).length;
+  const nW = Object.keys(NEW).reduce((a, k) => a + warnings(k).length + (NEW[k].contour ? 0 : 1) + (NEW[k].axes ? 0 : 1), 0);
+  const parts = [];
+  if (nNew) parts.push(`<b>${nNew}</b> nueva${nNew > 1 ? "s" : ""}${repl ? ` (${repl} reemplaza${repl > 1 ? "n" : ""} lo que hay en Drive)` : ""}`);
+  if (nNom) parts.push(`<b>${nNom}</b> no medible${nNom > 1 ? "s" : ""}`);
+  if (nUn) parts.push(`${nUn} marca${nUn > 1 ? "s" : ""} quitada${nUn > 1 ? "s" : ""}`);
+  parts.push(pend ? `${pend} pendiente${pend > 1 ? "s" : ""}` : "sin pendientes");
+  document.getElementById("sum").innerHTML = parts.join(" · ") + (nW ? ` · <span class="warns">${nW} aviso${nW > 1 ? "s" : ""} por revisar</span>` : "");
+  const up = document.getElementById("up"); const n = nNew + nNom + nUn;
+  up.disabled = busy || n === 0;
+  up.innerHTML = busy ? "Subiendo…" : (n ? `Subir ${nNew ? nNew + " captura" + (nNew > 1 ? "s" : "") : "cambios"}` : "Subir") + "<kbd>⌘↵</kbd>";
+  renderStatus(); setHeight();
+}
+function tile(k) {
+  const s = SLOTS[k]; const el = document.createElement("div"); el.className = "tile"; el.dataset.k = k;
+  if (!s.available) { el.classList.add("na"); el.innerHTML = `<div class="hint">No existe en la planilla${s.reason ? "<br>" + esc(s.reason) : ""}</div>`; return el; }
+  const nm = NOMED[k] || (s.nomed && !UNMARK.has(k) ? s.nomed : null);
+  if (nm && !NEW[k]) {
+    el.classList.add("nomed");
+    el.innerHTML = `<div class="hint"><b>No medible</b><br>${esc(nm)}</div>`;
+    const b = document.createElement("button"); b.className = "link"; b.textContent = "Quitar marca";
+    b.onclick = (e) => { e.stopPropagation(); if (NOMED[k]) delete NOMED[k]; else UNMARK.add(k); saveMarks(); active = k; render(); };
+    const box = document.createElement("div"); box.style.cssText = "position:absolute;bottom:4px;left:0;right:0"; box.appendChild(b); el.appendChild(box);
+    return el;
+  }
+  if (editingNomed === k) {
+    el.classList.add("nomed");
+    el.innerHTML = `<div class="nmform"><div class="hint"><b>Marcar como no medible</b></div><input id="nmi" placeholder="Motivo (ej. artefacto)" maxlength="80"><div><button id="nmok">Marcar</button><button id="nmc">Cancelar</button></div></div>`;
+    setTimeout(() => { const i = document.getElementById("nmi"); if (!i) return; i.focus();
+      const ok = () => { NOMED[k] = i.value.trim() || "No medible"; UNMARK.delete(k); saveMarks(); editingNomed = null; active = nextActive(k); render(); };
+      document.getElementById("nmok").onclick = (e) => { e.stopPropagation(); ok(); };
+      document.getElementById("nmc").onclick = (e) => { e.stopPropagation(); editingNomed = null; render(); };
+      i.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); ok(); } else if (e.key === "Escape") { editingNomed = null; render(); } };
+      i.onclick = (e) => e.stopPropagation(); }, 0);
+    return el;
+  }
+  if (active === k) el.classList.add("active");
+  const n = NEW[k], ex = s.existing;
+  if (n) {
+    el.classList.add("new");
+    el.innerHTML = `<img alt="" src="${n.url}"><span class="badge ${ex ? "repl" : "new"}">${ex ? "reemplaza" : "nueva"}</span>`;
+    const x = document.createElement("button"); x.className = "x"; x.title = "Quitar"; x.textContent = "×"; x.onclick = (e) => { e.stopPropagation(); removeNew(k); }; el.appendChild(x);
+    const ch = document.createElement("div"); ch.className = "checks";
+    ch.innerHTML = `<span class="chk ${n.contour ? "okc" : "b"}">${n.contour ? "contorno ✓" : "sin contorno"}</span><span class="chk ${n.axes ? "okc" : "w"}">${n.axes ? "ejes ✓" : "sin ejes"}</span>` + warnings(k).map(([c, t]) => `<span class="chk ${c}">${t}</span>`).join("");
+    el.appendChild(ch);
+  } else if (ex) {
+    el.classList.add("existing");
+    el.innerHTML = (ex.thumb ? `<img alt="" src="${ex.thumb}">` : `<div class="hint">En Drive</div>`) + `<span class="badge">en Drive</span>` + (active === k ? `<div class="checks"><span class="chk w">pega para reemplazar</span></div>` : "");
   } else {
-    renderFilled(currentData);
+    el.innerHTML = `<div class="hint">${active === k ? "Esperando imagen<br>⌘V" : "Vacía"}</div>`;
+    const b = document.createElement("button"); b.className = "link"; b.textContent = "No medible";
+    b.onclick = (e) => { e.stopPropagation(); editingNomed = k; render(); };
+    const box = document.createElement("div"); box.style.cssText = "position:absolute;bottom:4px;left:0;right:0"; box.appendChild(b); el.appendChild(box);
   }
-});
+  el.addEventListener("click", () => { if (busy) return; active = k; editingNomed = null; window.focus(); render(); });
+  el.addEventListener("dragover", (e) => { e.preventDefault(); });
+  el.addEventListener("drop", async (e) => { e.preventDefault(); const f = [...(e.dataTransfer.files || [])].find((f) => f.type.startsWith("image/")); if (!f) return; await putImage(k, f, false); active = nextActive(k); render(); });
+  return el;
+}
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
-ready();
-renderEmpty();
+/* ---------- subir ---------- */
+const toDataURL = (blob) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsDataURL(blob); });
+async function doUpload() {
+  if (busy || !ARGS) return;
+  const keys = Object.keys(NEW); if (!keys.length && !Object.keys(NOMED).length && !UNMARK.size) return;
+  busy = true; render();
+  const items = [];
+  for (const k of keys) { const n = NEW[k]; items.push({ key: k, data: await toDataURL(n.blob), w: n.w, h: n.h, contour: n.contour, axes: n.axes }); }
+  setValue({ id: Date.now() + "-" + Math.random().toString(36).slice(2), action: "upload", codigo: ARGS.patient.codigo, items,
+    nomed: Object.entries(NOMED).map(([key, reason]) => ({ key, reason })), unmark: [...UNMARK] });
+}
+document.getElementById("up").onclick = doUpload;
+
+/* ---------- mensajes desde Streamlit ---------- */
+window.addEventListener("message", async (event) => {
+  const data = event.data; if (!data || data.type !== "streamlit:render") return;
+  const args = (data.args && data.args.args) ? data.args.args : (data.args || {});
+  if (data.theme) applyTheme(data.theme);
+  const first = !ARGS || ARGS.patient.codigo !== args.patient.codigo;
+  ARGS = args; SLOTS = {}; for (const s of args.slots) SLOTS[s.key] = s;
+  if (args.status && args.status.id !== lastStatusId) { lastStatusId = args.status.id; if (!args.status.ok) { busy = false; flash(args.status.msg || "No se pudo subir. Intenta de nuevo."); } }
+  if (first) {
+    const saved = await DB.getAll(args.patient.codigo + "|");
+    const clearedTs = (args.cleared || {})[args.patient.codigo] || 0;
+    restoredCount = 0; NOMED = {}; UNMARK = new Set();
+    for (const [k, v] of saved) { const key = k.split("|")[1];
+      if (v && v.t && v.t <= clearedTs) { await DB.del(k); continue; }
+      if (key === "marks") { for (const [mk, mr] of Object.entries((v && v.nomed) || {})) if (SLOTS[mk] && SLOTS[mk].available) { NOMED[mk] = mr; restoredCount++; } for (const mk of (v && v.unmark) || []) UNMARK.add(mk); continue; }
+      if (SLOTS[key] && SLOTS[key].available && v && v.blob) { NEW[key] = Object.assign({ blob: v.blob, url: URL.createObjectURL(v.blob) }, v.info); restoredCount++; } }
+    document.getElementById("restored").textContent = restoredCount ? `Se recuperaron ${restoredCount} casilla${restoredCount > 1 ? "s" : ""} sin subir` : "";
+    active = nextActive(null);
+  }
+  render();
+});
+function applyTheme(t) {
+  const r = document.documentElement.style;
+  if (t.backgroundColor) r.setProperty("--bg", t.backgroundColor);
+  if (t.textColor) r.setProperty("--fg", t.textColor);
+  if (t.secondaryBackgroundColor) r.setProperty("--tile", t.secondaryBackgroundColor);
+  if (t.primaryColor) r.setProperty("--accent", t.primaryColor);
+  if (t.base === "dark") { r.setProperty("--line", "#30363f"); r.setProperty("--muted", "#9aa3ad"); }
+  else if (t.base === "light") { r.setProperty("--line", "#d5dae1"); r.setProperty("--muted", "#6b7380"); }
+}
+post("streamlit:componentReady", { apiVersion: 1 });
+setHeight();
 </script>
 </body>
 </html>
